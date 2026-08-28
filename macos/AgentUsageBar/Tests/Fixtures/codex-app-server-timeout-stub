@@ -1,0 +1,59 @@
+#!/bin/sh
+
+set -eu
+
+if [ "$#" -ne 3 ] \
+    || [ "$1" != "app-server" ] \
+    || [ "$2" != "--listen" ] \
+    || [ "$3" != "stdio://" ]; then
+    exit 64
+fi
+
+state_path=${AGENT_USAGE_BAR_CODEX_STUB_STATE:?missing isolated stub state path}
+temp_root=${TMPDIR:-/tmp}
+case "$state_path" in
+    "$temp_root"*) ;;
+    *) exit 65 ;;
+esac
+
+pid_log="${state_path}.pids"
+pwd -P >> "${state_path}.cwd"
+printf '%s\n' "${PWD:-}" >> "${state_path}.pwd"
+if [ -e "$state_path" ]; then
+    mode=success
+else
+    mode=hang
+    : > "$state_path"
+fi
+printf '%s\n' "$$" >> "$pid_log"
+
+# The client owns this cooperative test process. Its normal timeout recovery must be
+# able to end the first hung instance and the final test cleanup must end the second.
+trap 'exit 0' HUP INT TERM
+
+while IFS= read -r line; do
+    request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+
+    case "$line" in
+        *'"method":"initialize"'*)
+            [ -n "$request_id" ] || exit 66
+            printf '{"id":%s,"result":{"userAgent":"agent-usage-bar-timeout-stub/%s"}}\n' \
+                "$request_id" "$mode"
+            ;;
+
+        *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+            [ -n "$request_id" ] || exit 67
+            if [ "$mode" = success ]; then
+                printf '%s\n' \
+                    "{\"id\":${request_id},\"result\":{\"rateLimits\":{\"limitId\":\"codex\",\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":2000000000},\"secondary\":{\"usedPercent\":17,\"windowDurationMins\":10080,\"resetsAt\":2000600000}},\"rateLimitsByLimitId\":{\"codex\":{\"limitId\":\"codex\",\"primary\":{\"usedPercent\":42,\"windowDurationMins\":300,\"resetsAt\":2000000000},\"secondary\":{\"usedPercent\":17,\"windowDurationMins\":10080,\"resetsAt\":2000600000},\"planType\":\"synthetic\"}}}}"
+            fi
+            ;;
+
+        *'"method":"initialized"'*)
+            ;;
+
+        *)
+            exit 68
+            ;;
+    esac
+done

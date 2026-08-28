@@ -1,0 +1,10 @@
+// Shared build settings. Committed — must contain nothing personal.
+//
+// Signing here is deliberately neutral and complete: ad-hoc, manual, no team. Local
+// machine overrides are intentionally not included, so a Release build cannot silently
+// consume untracked signing or compiler settings.
+#include "Version.xcconfig"
+
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =

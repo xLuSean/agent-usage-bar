@@ -1,0 +1,44 @@
+#!/bin/sh
+
+set -eu
+
+if [ "$#" -ne 3 ] \
+    || [ "$1" != "app-server" ] \
+    || [ "$2" != "--listen" ] \
+    || [ "$3" != "stdio://" ]; then
+    exit 64
+fi
+
+state_path=${AGENT_USAGE_BAR_CODEX_STUB_STATE:?missing isolated stub state path}
+temp_root=${TMPDIR:-/tmp}
+case "$state_path" in
+    "$temp_root"*) ;;
+    *) exit 65 ;;
+esac
+
+printf '%s\n' "$$" >> "${state_path}.pids"
+trap '' HUP INT TERM
+
+while :; do
+    # Closing stdin is part of normal client teardown. This fixture deliberately resists
+    # both EOF and SIGTERM so the test reaches the exact-root hard-stop deadline.
+    if ! IFS= read -r line; then
+        sleep 1
+        continue
+    fi
+    request_id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    case "$line" in
+        *'"method":"initialize"'*)
+            [ -n "$request_id" ] || exit 66
+            printf '{"id":%s,"result":{"userAgent":"agent-usage-bar-resistant-stub"}}\n' "$request_id"
+            ;;
+        *'"method":"account/rateLimits/read"'*|*'"method":"account\/rateLimits\/read"'*)
+            [ -n "$request_id" ] || exit 67
+            ;;
+        *'"method":"initialized"'*)
+            ;;
+        *)
+            exit 68
+            ;;
+    esac
+done

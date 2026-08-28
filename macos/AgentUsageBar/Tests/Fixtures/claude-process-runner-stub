@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+
+import json
+import os
+import signal
+import sys
+import time
+
+
+def announce_ready(path: str) -> None:
+    with open(path, "w", encoding="ascii") as handle:
+        handle.write("ready\n")
+
+
+def wait_for_stop_capability(path: str) -> None:
+    """Let the exact fixture instance exit without signalling a stored PID."""
+    stop_path = f"{path}.stop"
+    done_path = f"{path}.done"
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not os.path.exists(stop_path):
+        time.sleep(0.02)
+    with open(done_path, "w", encoding="ascii") as handle:
+        handle.write("done\n")
+
+
+mode = sys.argv[1] if len(sys.argv) > 1 else ""
+state_file = sys.argv[2] if len(sys.argv) > 2 else ""
+
+if mode == "report-context":
+    print(
+        json.dumps(
+            {
+                "cwd": os.getcwd(),
+                "pwd": os.environ.get("PWD"),
+                "entries": os.listdir("."),
+            }
+        )
+    )
+elif mode == "ignore-term":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    announce_ready(state_file)
+    child_pid = os.fork()
+    if child_pid == 0:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        wait_for_stop_capability(state_file)
+        os._exit(0)
+
+    # The production runner must hard-stop this exact root. The child is cleaned up
+    # cooperatively through the unique state-file capability owned by the test.
+    os.waitpid(child_pid, 0)
+elif mode == "descendant-holds-pipe":
+    announce_ready(state_file)
+    child_pid = os.fork()
+    if child_pid == 0:
+        wait_for_stop_capability(state_file)
+        os._exit(0)
+
+    os._exit(0)
+else:
+    raise SystemExit(64)
