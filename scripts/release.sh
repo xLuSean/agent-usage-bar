@@ -300,6 +300,13 @@ run_prepare() {
     print "  ./scripts/release.sh finalize dist/$AUB_MANIFEST_BASENAME"
 }
 
+print_manual_push_steps() {
+    local expected_tag="$1"
+    print "Next manual Git steps (nothing is pushed automatically):"
+    print "  git push origin main"
+    print "  git push origin $expected_tag"
+}
+
 run_finalize() {
     acquire_lock
     trap release_lock_cleanup EXIT INT TERM
@@ -350,6 +357,7 @@ SHA-256: $dmg_sha"
             && "$tagged_commit" == "$source_commit" && "$existing_annotation" == "$annotation" ]] \
             || { print -u2 "Existing tag disagrees with the candidate and will not be moved."; return 1; }
         print "Candidate was already finalized as $expected_tag. Nothing changed."
+        print_manual_push_steps "$expected_tag"
         return 0
     fi
 
@@ -380,6 +388,7 @@ SHA-256: $dmg_sha"
         || { print -u2 "Tag readback did not point to the candidate commit."; return 1; }
     print "Created local annotated tag: $expected_tag"
     print "Nothing was pushed or published remotely."
+    print_manual_push_steps "$expected_tag"
 }
 
 case "$COMMAND" in

@@ -446,13 +446,19 @@ echo "==> release transaction fixture"
     "$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/awk '{print $1}')" "$transaction_builder"
   /usr/bin/plutil -convert json -o "$transaction" "$transaction_builder"
 
-  "$RELEASE_FIXTURE_ROOT/scripts/release.sh" finalize "$manifest" >/dev/null
+  finalize_output="$($RELEASE_FIXTURE_ROOT/scripts/release.sh finalize "$manifest")"
   test "$(git -C "$RELEASE_FIXTURE_ROOT" cat-file -t refs/tags/v0.4.100-alpha.1)" = tag \
     || { echo "FAIL: finalize did not create an annotated tag" >&2; exit 1; }
   test "$(git -C "$RELEASE_FIXTURE_ROOT" rev-list -n 1 v0.4.100-alpha.1)" = "$source_commit" \
     || { echo "FAIL: finalize tag does not point to the candidate commit" >&2; exit 1; }
-  "$RELEASE_FIXTURE_ROOT/scripts/release.sh" finalize "$manifest" >/dev/null \
+  echo "$finalize_output" | grep -Fq 'git push origin main' \
+    || { echo "FAIL: finalize did not print the branch push command" >&2; exit 1; }
+  echo "$finalize_output" | grep -Fq 'git push origin v0.4.100-alpha.1' \
+    || { echo "FAIL: finalize did not print the exact tag push command" >&2; exit 1; }
+  repeated_finalize_output="$($RELEASE_FIXTURE_ROOT/scripts/release.sh finalize "$manifest")" \
     || { echo "FAIL: exact repeated finalize was not idempotent" >&2; exit 1; }
+  echo "$repeated_finalize_output" | grep -Fq 'git push origin v0.4.100-alpha.1' \
+    || { echo "FAIL: repeated finalize did not print the exact tag push command" >&2; exit 1; }
 
   mv "$transaction" "$transaction.saved"
   "$RELEASE_FIXTURE_ROOT/scripts/release.sh" finalize "$manifest" >/dev/null \

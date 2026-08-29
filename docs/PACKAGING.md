@@ -83,6 +83,8 @@ Finalize 不會猜「最新」檔案，也不接受 `dist/` 以外的 manifest�
 
 Finalize 成功後，exact annotated tag 會保存 source commit／tree、DMG 名稱、bytes 與 SHA-256。日後即使已清理 ignored `tmp/`，同一份仍通過完整 candidate 驗證的 manifest／DMG，只要 tag 型別、指向與 annotation 全部吻合，就會安全回報「已完成、沒有變更」；不會因暫存 transaction 消失而破壞冪等 readback。若 tag 任一欄不同，仍立即停止且絕不移動既有 tag。
 
+成功建立或讀回 tag 後，Finalize 會直接印出下一步的精確手動指令：先 push `main`，再只 push manifest 指定的 tag。這些只是提示，不會由腳本執行；若遠端不是 `origin`，維護者必須把指令中的 remote 名稱換成自己的設定。不要使用 `git push --tags` 或 force push。
+
 這筆本機交易紀錄是防誤用與稽核證據，**不是密碼學上的發布者身分**：同一個已能任意改寫 repository 與 `tmp/` 的本機使用者，也能改寫它。真正的對外發布者驗證仍需要 Developer ID／公證、維護者控制的外部簽章，或另一個可信通道保存 digest。Finalize 成功後只建立本機 tag，仍不 push 或發布遠端 Release；既有 tag 永遠不會被移動。
 
 ## 失敗時會留下什麼
