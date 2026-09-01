@@ -13,6 +13,21 @@ macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面�
 
 本專案與 Anthropic、OpenAI 均無隸屬關係，也未獲其背書。所有圖示為原創設計，未使用任何官方標誌。
 
+## 示意圖
+
+<p align="center">
+  <img src="docs/images/combined-popover-dark.png" width="320" alt="Claude 與 Codex 合併模式的深色用量面板">
+</p>
+
+<p align="center"><sub>合併模式的 Claude／Codex 用量面板。數字全部來自合成 demo data，不是真實帳號資料。</sub></p>
+
+<p align="center">
+  <img src="docs/images/settings-zh-dark.png" width="46%" alt="繁體中文設定頁">
+  <img src="docs/images/settings-en-dark.png" width="46%" alt="英文設定頁">
+</p>
+
+<p align="center"><sub>設定頁可在繁體中文與 English 之間切換；兩張圖同樣使用隔離的合成設定。</sub></p>
+
 ## 它做什麼
 
 選單列上一個直立的液位計，**填滿的高度就是用掉的比例** —— 隨消耗往上長，不是往下退。點開可以看到各時間窗的詳細數字。

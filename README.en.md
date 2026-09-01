@@ -13,6 +13,21 @@ A Claude and Codex usage meter for the macOS menu bar. See how much of your subs
 
 This project is not affiliated with or endorsed by Anthropic or OpenAI. All icons are original and do not use either company's official marks.
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/combined-popover-dark.png" width="320" alt="Combined Claude and Codex usage popover in dark mode">
+</p>
+
+<p align="center"><sub>Combined Claude and Codex usage in dark mode. Every number is synthetic demo data, not real account information.</sub></p>
+
+<p align="center">
+  <img src="docs/images/settings-zh-dark.png" width="46%" alt="Settings in Traditional Chinese">
+  <img src="docs/images/settings-en-dark.png" width="46%" alt="Settings in English">
+</p>
+
+<p align="center"><sub>Settings can switch between Traditional Chinese and English. Both images use isolated synthetic preferences.</sub></p>
+
 ## What it does
 
 Agent Usage Bar places a vertical liquid gauge in the menu bar. **The filled height is the percentage already used**—it rises as usage grows rather than shrinking as allowance runs out. Click it to see detailed values for each usage window.
