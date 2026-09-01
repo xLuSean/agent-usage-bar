@@ -16,6 +16,12 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 ## Screenshots
 
 <p align="center">
+  <img src="docs/images/menu-bar-dark.png" width="720" alt="Claude and Codex gauges at their actual macOS menu-bar size">
+</p>
+
+<p align="center"><sub>The separate-display menu-bar appearance. The gauges come from the app's production renderer; the clean synthetic background contains no real desktop information.</sub></p>
+
+<p align="center">
   <img src="docs/images/combined-popover-dark.png" width="320" alt="Combined Claude and Codex usage popover in dark mode">
 </p>
 

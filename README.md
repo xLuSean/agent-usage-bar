@@ -16,6 +16,12 @@ macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面�
 ## 示意圖
 
 <p align="center">
+  <img src="docs/images/menu-bar-dark.png" width="720" alt="Claude 與 Codex 量表在 macOS 選單列上的實際尺寸示意">
+</p>
+
+<p align="center"><sub>分開顯示時的選單列外觀。量表由 App 的正式繪圖器產生；背景是乾淨的合成畫面，不含真實桌面資訊。</sub></p>
+
+<p align="center">
   <img src="docs/images/combined-popover-dark.png" width="320" alt="Claude 與 Codex 合併模式的深色用量面板">
 </p>
 
