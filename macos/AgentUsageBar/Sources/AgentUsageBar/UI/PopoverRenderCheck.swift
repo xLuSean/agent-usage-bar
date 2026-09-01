@@ -221,6 +221,68 @@ enum PopoverRenderCheck {
             }
         }
 
+        // Render the new expanded diagnostic state directly. The ordinary settings
+        // pass starts on Providers, so it cannot prove that a disclosure row, wrapped
+        // detail text, and copy button fit inside the shipping settings window.
+        do {
+            let suiteName = "io.github.sean.AgentUsageBar.render.diagnostics.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suiteName)!
+            defer { defaults.removePersistentDomain(forName: suiteName) }
+            let store = DiagnosticLogStore(defaults: defaults)
+            _ = store.append(
+                provider: .claude,
+                error: .schemaChanged("Missing the \"Current week (all models)\" line"),
+                now: Date()
+            )
+            let diagnosticsModel = AppModel(
+                displayLanguage: .english,
+                diagnosticLogStore: store
+            )
+            let expandedIDs = Set(diagnosticsModel.diagnosticEntries.map(\.id))
+            let appearance = NSAppearance(named: .darkAqua)!
+            let backdrop = NSColor(white: 0.16, alpha: 1)
+            let window = NSWindow(
+                contentRect: NSRect(origin: .zero, size: settingsSize),
+                styleMask: [.titled, .closable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.appearance = appearance
+            let hosting = NSHostingController(rootView: SettingsView(
+                model: diagnosticsModel,
+                initialTab: .diagnostics,
+                initiallyExpandedDiagnosticEntryIDs: expandedIDs
+            ))
+            window.contentViewController = hosting
+            window.setContentSize(NSSize(
+                width: max(hosting.view.fittingSize.width, SettingsView.contentSize.width),
+                height: max(hosting.view.fittingSize.height, SettingsView.contentSize.height + 44)
+            ))
+            window.layoutIfNeeded()
+
+            guard let content = window.contentView else {
+                check(false, "Settings / Diagnostics expanded: missing contentView")
+                return 1
+            }
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let label = "Settings / Diagnostics expanded / English / Dark (\(Int(bounds.width))×\(Int(bounds.height)))"
+            check(bounds.height > 0 && bounds.width >= SettingsView.contentSize.width,
+                  "\(label): content area fits the settings window")
+            guard let rep = content.bitmapImageRepForCachingDisplay(in: bounds) else {
+                check(false, "\(label): could not create bitmap rep")
+                return 1
+            }
+            appearance.performAsCurrentDrawingAppearance {
+                content.cacheDisplay(in: bounds, to: rep)
+            }
+            check(rep.pixelsHigh > 0 && rep.pixelsWide > 0,
+                  "\(label): rendered \(rep.pixelsWide)×\(rep.pixelsHigh) pixels")
+            let image = NSImage(size: bounds.size)
+            image.addRepresentation(rep)
+            settingsImages.append((label, image, backdrop))
+        }
+
         if let path, !images.isEmpty {
             do {
                 let popoverCellSize = NSSize(

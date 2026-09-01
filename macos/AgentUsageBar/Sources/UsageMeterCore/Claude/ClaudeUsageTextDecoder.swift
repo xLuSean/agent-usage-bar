@@ -113,11 +113,10 @@ public enum ClaudeUsageTextDecoder {
         /// `Current session: 0% used` when no session window is running.
         ///
         /// The reset clause is optional because the five-hour window is anchored to
-        /// first use, not to the clock: it starts when you next use Claude Code after
-        /// the previous one ended (observed 2026-08-25: one window ended 22:09, the
-        /// next ended 03:19 — five hours and ten minutes apart). Between the two there
-        /// is no running window, so there is no reset to report and the CLI prints the
-        /// percentage alone.
+        /// first use rather than to the wall clock. After one window ends, the next
+        /// begins only when Claude Code is used again, so successive reset timestamps
+        /// can be more than five hours apart. During that idle gap there is no running
+        /// session window or reset to report, and the CLI prints the percentage alone.
         ///
         /// Requiring the clause treated that ordinary state as schema drift, and the
         /// app sat on 過期 through every gap between finishing for the night and

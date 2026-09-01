@@ -332,8 +332,8 @@ struct ClaudeUsageTextDecoderTests {
     /// ending and the next starting there is no window at all. The CLI then prints the
     /// session percentage with no reset clause.
     ///
-    /// Observed live on 2026-08-25: the app failed four consecutive polls in that gap,
-    /// reporting a missing line that was in fact present.
+    /// This is a regression for a real gap state where the line is present without a
+    /// reset clause; dates, percentages, and reset times in fixtures remain synthetic.
     @Test func acceptsASessionLineWithNoResetClause() throws {
         let snapshot = try ClaudeUsageTextDecoder.decode(
             Self.envelope(Self.body(session: "0% used")),

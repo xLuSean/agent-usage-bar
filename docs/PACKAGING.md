@@ -12,9 +12,9 @@ macos/AgentUsageBar/App/AgentUsageBar/Config/Version.xcconfig
 
 Xcode 的 Debug／Release、App 內 metadata、DMG 檔名、checksum、candidate manifest 與最後的 Git tag 都必須讀到同一組值。Build 是 committed counter，不再依賴 Git commit 數，因此重置或重建歷史不會讓 build 倒退。
 
-目前 committed metadata 是 `0.4.103 (4103), alpha.1`。下一個一般候選由工具計算為 `0.4.104-alpha.1 (4104)`。這行只記錄 2026-08-28 的現況；真正執行時一律以 `Version.xcconfig` 與當下的只讀 plan 為準，不從文件猜版本。
+目前 committed metadata 與下一個候選一律由 `Version.xcconfig` 及當下的只讀 plan 決定；執行 `./scripts/release.sh plan` 查看，不從文件中的歷史範例猜版本。
 
-`--next-minor` 只在維護者明確決定跳到下一個 minor 時使用。以目前版本執行會產生 `0.5.100`，因此它不是建立下一個候選的預設指令。
+`--next-minor` 只在維護者明確決定跳到下一個 minor 時使用，不是建立下一個一般候選的預設指令。
 
 ## 只讀檢查
 

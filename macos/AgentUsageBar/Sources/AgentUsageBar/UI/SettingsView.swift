@@ -1,5 +1,13 @@
+import AppKit
 import SwiftUI
 import UsageMeterCore
+
+enum SettingsTab: Hashable {
+    case providers
+    case dataSources
+    case diagnostics
+    case about
+}
 
 /// The real settings window's content.
 ///
@@ -8,26 +16,46 @@ import UsageMeterCore
 /// you want to see the effect of.
 struct SettingsView: View {
     let model: AppModel
+    let initiallyExpandedDiagnosticEntryIDs: Set<UUID>
+    @State private var selectedTab: SettingsTab
 
     /// Sized on the tab *content*, not on the `TabView`. Constraining the TabView
     /// itself leaves its tab strip no room and the strip gets clipped, because the
     /// strip is drawn outside the content area rather than inside it.
     static let contentSize = NSSize(width: 460, height: 380)
 
+    init(
+        model: AppModel,
+        initialTab: SettingsTab = .providers,
+        initiallyExpandedDiagnosticEntryIDs: Set<UUID> = []
+    ) {
+        self.model = model
+        self.initiallyExpandedDiagnosticEntryIDs = initiallyExpandedDiagnosticEntryIDs
+        _selectedTab = State(initialValue: initialTab)
+    }
+
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             ProvidersSettingsTab(model: model, bindableModel: model)
                 .frame(width: Self.contentSize.width, height: Self.contentSize.height)
                 .tabItem { Label("Providers", systemImage: "gauge.with.dots.needle.bottom.50percent") }
+                .tag(SettingsTab.providers)
             DeveloperSettingsTab(model: model, bindableModel: model)
                 .frame(width: Self.contentSize.width, height: Self.contentSize.height)
                 .tabItem { Label("Data Sources", systemImage: "flask") }
-            DiagnosticsSettingsTab(model: model, bindableModel: model)
+                .tag(SettingsTab.dataSources)
+            DiagnosticsSettingsTab(
+                model: model,
+                bindableModel: model,
+                initiallyExpandedEntryIDs: initiallyExpandedDiagnosticEntryIDs
+            )
                 .frame(width: Self.contentSize.width, height: Self.contentSize.height)
                 .tabItem { Label("Diagnostics", systemImage: "doc.text.magnifyingglass") }
+                .tag(SettingsTab.diagnostics)
             AboutTab(model: model)
                 .frame(width: Self.contentSize.width, height: Self.contentSize.height)
                 .tabItem { Label("About", systemImage: "info.circle") }
+                .tag(SettingsTab.about)
         }
         .environment(\.locale, model.displayLanguage.locale)
     }
@@ -36,6 +64,18 @@ struct SettingsView: View {
 private struct DiagnosticsSettingsTab: View {
     let model: AppModel
     @Bindable var bindableModel: AppModel
+    @State private var expandedEntryIDs: Set<UUID>
+    @State private var copiedEntryID: UUID?
+
+    init(
+        model: AppModel,
+        bindableModel: AppModel,
+        initiallyExpandedEntryIDs: Set<UUID> = []
+    ) {
+        self.model = model
+        self.bindableModel = bindableModel
+        _expandedEntryIDs = State(initialValue: initiallyExpandedEntryIDs)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -77,19 +117,49 @@ private struct DiagnosticsSettingsTab: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(model.diagnosticEntries) { entry in
-                                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                    Text(verbatim: entry.provider.displayName)
-                                        .font(.callout.weight(.semibold))
-                                        .frame(width: 58, alignment: .leading)
-                                    Text(verbatim: entry.kind.displayName(locale: model.displayLanguage.locale))
-                                        .font(.callout)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    Text(verbatim: TimeFormatting.dateAndTime(
-                                        entry.occurredAt,
-                                        locale: model.displayLanguage.locale
-                                    ))
-                                    .font(.caption.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                                DisclosureGroup(isExpanded: expansionBinding(for: entry.id)) {
+                                    VStack(alignment: .leading, spacing: 10) {
+                                        Text(verbatim: entry.detailMessage(locale: model.displayLanguage.locale))
+                                            .font(.callout)
+                                            .foregroundStyle(.secondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .textSelection(.enabled)
+
+                                        HStack {
+                                            Spacer()
+                                            Button {
+                                                copyDiagnostic(entry)
+                                            } label: {
+                                                Label(
+                                                    copiedEntryID == entry.id ?
+                                                        model.displayLanguage.text(chinese: "已複製", english: "Copied") :
+                                                        model.displayLanguage.text(chinese: "複製訊息", english: "Copy Message"),
+                                                    systemImage: copiedEntryID == entry.id ? "checkmark" : "doc.on.doc"
+                                                )
+                                            }
+                                            .accessibilityLabel(model.displayLanguage.text(
+                                                chinese: "複製這筆完整診斷訊息",
+                                                english: "Copy this complete diagnostic message"
+                                            ))
+                                        }
+                                    }
+                                    .padding(.top, 8)
+                                    .padding(.leading, 22)
+                                } label: {
+                                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                        Text(verbatim: entry.provider.displayName)
+                                            .font(.callout.weight(.semibold))
+                                            .frame(width: 58, alignment: .leading)
+                                        Text(verbatim: entry.kind.displayName(locale: model.displayLanguage.locale))
+                                            .font(.callout)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                        Text(verbatim: TimeFormatting.dateAndTime(
+                                            entry.occurredAt,
+                                            locale: model.displayLanguage.locale
+                                        ))
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                    }
                                 }
                                 .padding(.vertical, 7)
                                 if entry.id != model.diagnosticEntries.last?.id {
@@ -109,13 +179,36 @@ private struct DiagnosticsSettingsTab: View {
             .frame(maxHeight: .infinity)
 
             Text(model.displayLanguage.text(
-                chinese: "為保護隱私，紀錄不包含原始回應、憑證、執行檔路徑或供應商提供的任意文字；最多保存最新 \(DiagnosticLogStore.maximumEntries) 筆。",
-                english: "For privacy, the log excludes raw responses, credentials, executable paths, and arbitrary provider text. At most the newest \(DiagnosticLogStore.maximumEntries) entries are kept."
+                chinese: "展開紀錄可查看並複製 App 產生的完整診斷。為保護隱私，內容不包含原始回應、憑證、執行檔路徑或供應商提供的任意文字；最多保存最新 \(DiagnosticLogStore.maximumEntries) 筆。",
+                english: "Expand an entry to view and copy the complete app-authored diagnostic. For privacy, it excludes raw responses, credentials, executable paths, and arbitrary provider text. At most the newest \(DiagnosticLogStore.maximumEntries) entries are kept."
             ))
             .font(.caption2)
             .foregroundStyle(.secondary)
         }
         .padding(20)
+    }
+
+    private func expansionBinding(for id: UUID) -> Binding<Bool> {
+        Binding(
+            get: { expandedEntryIDs.contains(id) },
+            set: { isExpanded in
+                if isExpanded {
+                    expandedEntryIDs.insert(id)
+                } else {
+                    expandedEntryIDs.remove(id)
+                }
+            }
+        )
+    }
+
+    private func copyDiagnostic(_ entry: DiagnosticLogEntry) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(
+            entry.copyText(locale: model.displayLanguage.locale),
+            forType: .string
+        ) else { return }
+        copiedEntryID = entry.id
     }
 }
 

@@ -34,10 +34,85 @@ struct DiagnosticLogStoreTests {
 
             #expect(entries.count == 1)
             #expect(entries[0].kind == .schemaChanged)
+            #expect(entries[0].detail == .unrecognizedResponse)
             let persisted = defaults.data(forKey: "v1.diagnosticLog")
             let text = persisted.flatMap { String(data: $0, encoding: .utf8) }
             #expect(text?.contains(marker) == false)
             #expect(text?.contains("/Users/private") == false)
+            #expect(entries[0].copyText(locale: Locale(identifier: "en_US")).contains(marker) == false)
+        }
+    }
+
+    @Test("known Claude decoder failures retain a precise app-authored detail")
+    func retainsSafeClaudeDetail() {
+        withStore { store, defaults in
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let entries = store.append(
+                provider: .claude,
+                error: .schemaChanged("Missing the \"Current week (all models)\" line"),
+                now: now
+            )
+
+            #expect(entries.count == 1)
+            #expect(entries[0].detail == .claudeWeeklyLineMissing)
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "en_US")) ==
+                    "Claude Code did not return the Current week (all models) usage line.")
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "zh_Hant_TW")) ==
+                    "Claude Code 沒有回傳 Current week (all models) 用量行。")
+            let copied = entries[0].copyText(locale: Locale(identifier: "en_US"))
+            #expect(copied.contains("Provider: Claude"))
+            #expect(copied.contains("Error: Response format changed"))
+            #expect(copied.contains("Detail: Claude Code did not return the Current week (all models) usage line."))
+
+            let persisted = defaults.data(forKey: "v1.diagnosticLog")
+            let persistedText = persisted.flatMap { String(data: $0, encoding: .utf8) }
+            #expect(persistedText?.contains("Current week (all models)") == false)
+            #expect(persistedText?.contains("claudeWeeklyLineMissing") == true)
+        }
+    }
+
+    @Test("dynamic provider values are reduced to a fixed diagnostic detail")
+    func stripsDynamicSchemaValues() {
+        withStore { store, defaults in
+            let marker = "999-secret-marker"
+            let entries = store.append(
+                provider: .claude,
+                error: .schemaChanged("Percentage \(marker) is out of range in \"Current session\""),
+                now: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+
+            #expect(entries[0].detail == .claudeSessionPercentageInvalid)
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "en_US")) ==
+                    "Claude Code returned an invalid Current session percentage.")
+            let persisted = defaults.data(forKey: "v1.diagnosticLog")
+            let persistedText = persisted.flatMap { String(data: $0, encoding: .utf8) }
+            #expect(persistedText?.contains(marker) == false)
+        }
+    }
+
+    @Test("logs written before detailed diagnostics still decode")
+    func decodesLegacyEntries() {
+        struct LegacyEntry: Codable {
+            let id: UUID
+            let occurredAt: Date
+            let provider: ProviderKind
+            let kind: DiagnosticErrorKind
+        }
+
+        withStore { store, defaults in
+            let legacy = LegacyEntry(
+                id: UUID(),
+                occurredAt: Date(timeIntervalSince1970: 1_800_000_000),
+                provider: .claude,
+                kind: .schemaChanged
+            )
+            defaults.set(try! JSONEncoder().encode([legacy]), forKey: "v1.diagnosticLog")
+
+            let entries = store.load(now: Date(timeIntervalSince1970: 1_800_000_001))
+            #expect(entries.count == 1)
+            #expect(entries[0].detail == nil)
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "en_US")) ==
+                    "This older log entry did not save additional diagnostic detail.")
         }
     }
 
@@ -61,6 +136,35 @@ struct DiagnosticLogStoreTests {
             let encoded = try! JSONEncoder().encode(threeDays + [future])
             defaults.set(encoded, forKey: "v1.diagnosticLog")
             #expect(store.load(now: now).count == 1)
+        }
+    }
+
+    @Test("oversized persisted diagnostics are rejected before decoding")
+    func rejectsOversizedPersistedData() {
+        withStore { store, defaults in
+            let now = Date(timeIntervalSince1970: 1_800_000_000)
+            let entry = DiagnosticLogEntry(
+                occurredAt: now,
+                provider: .claude,
+                kind: .schemaChanged,
+                detail: .claudeWeeklyLineMissing
+            )
+            let encoded = try! JSONEncoder().encode([entry])
+            let maximumStoredBytes = DiagnosticLogStore.maximumStoredBytes
+            #expect(encoded.count < maximumStoredBytes)
+
+            var atLimit = encoded
+            atLimit.append(
+                Data(repeating: 0x20, count: maximumStoredBytes - encoded.count)
+            )
+            defaults.set(atLimit, forKey: "v1.diagnosticLog")
+            #expect(store.load(now: now).count == 1)
+
+            var oversized = atLimit
+            oversized.append(0x20)
+            defaults.set(oversized, forKey: "v1.diagnosticLog")
+            #expect(store.load(now: now).isEmpty)
+            #expect(defaults.object(forKey: "v1.diagnosticLog") == nil)
         }
     }
 

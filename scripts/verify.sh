@@ -521,16 +521,47 @@ grep -q 'runs-on: macos-26' "$WORKFLOW" \
   || { echo "FAIL: CI runner is not pinned to macos-26" >&2; exit 1; }
 grep -q 'DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer' "$WORKFLOW" \
   || { echo "FAIL: CI Xcode toolchain is not pinned" >&2; exit 1; }
-grep -q 'uses: actions/checkout@v6' "$WORKFLOW" \
-  || { echo "FAIL: CI checkout action is not the reviewed major version" >&2; exit 1; }
+CHECKOUT_ACTION_SHA='d23441a48e516b6c34aea4fa41551a30e30af803'
+checkout_action_count="$(grep -Ec '^[[:space:]]*uses:[[:space:]]*actions/checkout@' "$WORKFLOW" || true)"
+test "$checkout_action_count" -eq 1 \
+  || { echo "FAIL: CI must contain exactly one checkout action" >&2; exit 1; }
+grep -Fqx "        uses: actions/checkout@$CHECKOUT_ACTION_SHA # v6.1.0" "$WORKFLOW" \
+  || { echo "FAIL: CI checkout action is not pinned to the reviewed immutable commit" >&2; exit 1; }
 grep -q 'persist-credentials: false' "$WORKFLOW" \
   || { echo "FAIL: CI checkout retains push credentials" >&2; exit 1; }
 
 # Private coordination and retired credential experiments are local development records,
 # not public source. This also makes an accidental re-add fail before a repository reset.
+for local_only_path in \
+  '.handoff/current.md' \
+  'docs/HANDOFF_to_example.md' \
+  'docs/PUBLIC_GITHUB_PLAN.md' \
+  'scripts/inspect_codex_usage.mjs'
+do
+  git check-ignore -q --no-index "$local_only_path" \
+    || { echo "FAIL: public-tree ignore rule is missing for $local_only_path" >&2; exit 1; }
+done
+
+tracked_coordination="$(git ls-files -- \
+  '.handoff/**' \
+  'docs/HANDOFF_to_*.md' \
+  'docs/PUBLIC_GITHUB_PLAN.md' \
+  'scripts/inspect_codex_usage.mjs')"
+if [[ -n "$tracked_coordination" ]]; then
+  echo "FAIL: private coordination files are tracked:" >&2
+  printf '%s\n' "$tracked_coordination" >&2
+  exit 1
+fi
+
 if [[ -n "$(git ls-files -ci --exclude-standard)" ]]; then
   echo "FAIL: ignored local-only files are still tracked:" >&2
   git ls-files -ci --exclude-standard >&2
+  exit 1
+fi
+
+if rg -n 'observed [0-9]{4}-[0-9]{2}-[0-9]{2}:' \
+  macos/AgentUsageBar/Sources; then
+  echo "FAIL: shipping source contains a dated live observation" >&2
   exit 1
 fi
 

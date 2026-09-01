@@ -12,7 +12,7 @@ App 不做的事，這是硬性清單：
 - 不實作 OAuth 登入或 refresh 流程，也不執行任何登入指令，沿用 Claude Code 既有登入狀態。
 - 不購買 credits、不啟用自動加值、不修改 spend 設定；不呼叫 `account/rateLimitResetCredit/consume` 或 `account/sendAddCreditsNudgeEmail`。
 - 查詢失敗時**不改用**讀取 JSONL、SQLite、transcript 或其他本機檔案的替代方案。
-- 設定中的錯誤紀錄只保存時間、供應商與封閉錯誤類型。`UsageError` 內的自由文字、原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑與 provider metadata 都不保存；預設 5 天，可選 3／7 天、隨時清除，且最多 200 筆。
+- 設定中的錯誤紀錄保存時間、供應商、封閉錯誤類型與封閉詳細原因。詳細原因是 App 把已知錯誤形狀縮減成固定代碼後再產生的說明；未知的 `UsageError` 自由文字只記成「無法辨識」，不得原樣保存。每筆可展開並複製同一份隱私安全說明；原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑與 provider metadata 都不保存或複製。預設 5 天，可選 3／7 天、隨時清除，最多 200 筆；持久化資料超過 64 KiB 時在 JSON 解碼前直接拒絕並清除。
 - Claude 與 Codex 子程序不得從 `/`、home、App 安裝位置或使用者專案執行。每個 process instance 只使用 App 在目前使用者本機暫存區建立的空白 `0700` 目錄；建立或驗證失敗時查詢直接失敗，不得 fallback。
 
 兩邊的指令與 arguments 都固定在程式中，沒有任何介面可以提供任意指令、參數或 URL。允許清單就是型別本身（`ClaudeUsageCommand`、`CodexJSONRPCMethod`）。

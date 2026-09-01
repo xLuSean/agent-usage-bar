@@ -14,7 +14,7 @@
 
 ## 下一步（依價值排序）
 
-1. **完成公開前最後候選。** 第一個內部候選 `0.4.103-alpha.1 (4103)` 已建立、安裝驗收並建立本機 tag；它不會自動 push 或變成 GitHub Release。公開收尾若再改到 shipping code，應重新從 `./scripts/release.sh plan` 建立下一個一般候選（依目前 metadata 為 `0.4.104-alpha.1 (4104)`），不可把舊 DMG 當成新 source 的證據。Git 歷史重建由維護者另行決定，release 工具不執行 reset 或 history rewrite。
+1. **建立與目前 source 一致的新候選。** 每次公開收尾若改到 shipping code，都應重新從 `./scripts/release.sh plan` 建立下一個一般候選，不可把舊 DMG 當成新 source 的證據。版本與 build 只讀取 committed metadata；release 工具不執行 reset 或 history rewrite。
 2. **網路恢復偵測。** 斷網後恢復連線時重新整理，不必等下一次排程。
 3. **乾淨 Mac 驗收、自動更新與 universal binary。** 依實際公開需求分階段處理。
 

@@ -6,8 +6,13 @@ xcuserdata/
 *.xcuserstate
 dist/
 /tmp/
+/test/
 
 # agent setting folder:
 .agents/
 .claude/
 .codex/
+/.handoff/
+/docs/HANDOFF_to_*.md
+/docs/PUBLIC_GITHUB_PLAN.md
+/scripts/inspect_codex_usage.mjs
