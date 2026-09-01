@@ -6,7 +6,8 @@ public enum CodexRateLimitDecoder {
     public static func decode(
         _ data: Data,
         fetchedAt: Date,
-        serverUserAgent: String? = nil
+        serverUserAgent: String? = nil,
+        accountUsage: CodexAccountUsage? = nil
     ) throws -> UsageSnapshot {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw UsageError.schemaChanged("Codex rate-limit response is not a JSON object")
@@ -53,7 +54,8 @@ public enum CodexRateLimitDecoder {
             rateLimitReachedType: reachedType,
             spendControlReached: bucket["spendControlReached"] as? Bool,
             meteredLimitID: limitID,
-            sourceVersion: ProviderMetadataText.normalizedDisplay(serverUserAgent)
+            sourceVersion: ProviderMetadataText.normalizedDisplay(serverUserAgent),
+            codexAccountUsage: accountUsage
         )
     }
 

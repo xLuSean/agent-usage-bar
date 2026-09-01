@@ -27,14 +27,14 @@ struct RefreshIntervalTests {
         #expect(RefreshInterval.tenMinutes.isRecommended(for: .claude))
         #expect(RefreshInterval.tenMinutes.isRecommended(for: .codex))
         #expect(!RefreshInterval.thirtyMinutes.isRecommended(for: .claude))
-        #expect(RefreshInterval.recommended(for: .codex).requestsPerDay == 144)
+        #expect(RefreshInterval.recommended(for: .codex).refreshesPerDay == 144)
     }
 
-    @Test("每天請求次數的換算")
-    func requestsPerDay() {
-        #expect(RefreshInterval.oneMinute.requestsPerDay == 1440)
-        #expect(RefreshInterval.fiveMinutes.requestsPerDay == 288)
-        #expect(RefreshInterval.oneHour.requestsPerDay == 24)
+    @Test("每天更新次數的換算")
+    func refreshesPerDay() {
+        #expect(RefreshInterval.oneMinute.refreshesPerDay == 1440)
+        #expect(RefreshInterval.fiveMinutes.refreshesPerDay == 288)
+        #expect(RefreshInterval.oneHour.refreshesPerDay == 24)
     }
 
     @Test("風險較高的選項會附上說明，建議值不會")

@@ -428,6 +428,7 @@ final class StatusBarController: NSObject {
             rootView: UsagePopoverView(
                 presenters: presenters,
                 language: model.displayLanguage,
+                codexTokenHistoryPeriod: model.codexTokenHistoryPeriod,
                 allowsScrolling: false,
                 onOpenSettings: onOpenSettings
             )
@@ -445,6 +446,7 @@ final class StatusBarController: NSObject {
                 rootView: UsagePopoverView(
                     presenters: presenters,
                     language: model.displayLanguage,
+                    codexTokenHistoryPeriod: model.codexTokenHistoryPeriod,
                     allowsScrolling: true,
                     onOpenSettings: onOpenSettings
                 )

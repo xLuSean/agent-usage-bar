@@ -61,6 +61,41 @@ enum StatusBarSelfTest {
             "Display language persists independently from provider settings"
         )
 
+        let historySuite = "AgentUsageBar.selftest.codex-history.\(UUID().uuidString)"
+        let historyDefaults = UserDefaults(suiteName: historySuite)!
+        defer { historyDefaults.removePersistentDomain(forName: historySuite) }
+        check(
+            SettingsStore.loadCodexTokenHistoryPeriod(defaults: historyDefaults) == .thirtyDays,
+            "Codex token history defaults to 30 days"
+        )
+        for period in CodexTokenHistoryPeriod.allCases {
+            SettingsStore.saveCodexTokenHistoryPeriod(period, defaults: historyDefaults)
+            check(
+                SettingsStore.loadCodexTokenHistoryPeriod(defaults: historyDefaults) == period,
+                "Codex token history persists \(period.rawValue) days"
+            )
+        }
+
+        let tokenRefreshSuite = "AgentUsageBar.selftest.codex-token-refresh.\(UUID().uuidString)"
+        let tokenRefreshDefaults = UserDefaults(suiteName: tokenRefreshSuite)!
+        defer { tokenRefreshDefaults.removePersistentDomain(forName: tokenRefreshSuite) }
+        check(
+            SettingsStore.loadCodexTokenRefreshInterval(defaults: tokenRefreshDefaults) == .oneHour,
+            "Codex token refresh defaults to one hour"
+        )
+        for interval in CodexTokenRefreshInterval.allCases {
+            SettingsStore.saveCodexTokenRefreshInterval(interval, defaults: tokenRefreshDefaults)
+            check(
+                SettingsStore.loadCodexTokenRefreshInterval(defaults: tokenRefreshDefaults) == interval,
+                "Codex token refresh persists \(interval.rawValue) seconds"
+            )
+        }
+        historyDefaults.set(11, forKey: "v1.codexTokenHistoryDays")
+        check(
+            SettingsStore.loadCodexTokenHistoryPeriod(defaults: historyDefaults) == .thirtyDays,
+            "Invalid Codex token history preference falls back to 30 days"
+        )
+
         let pauseModel = AppModel(displayLanguage: .traditionalChinese, presenters: [])
         pauseModel.setPaused(true, for: .systemSleep)
         pauseModel.setPaused(true, for: .screenLock)

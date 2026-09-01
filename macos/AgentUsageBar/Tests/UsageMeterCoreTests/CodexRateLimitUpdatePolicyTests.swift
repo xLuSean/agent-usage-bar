@@ -41,7 +41,12 @@ struct CodexRateLimitUpdatePolicyTests {
             rateLimitReachedType: nil,
             spendControlReached: false,
             meteredLimitID: meteredLimitID,
-            sourceVersion: "codex-cli/0.1"
+            sourceVersion: "codex-cli/0.1",
+            codexAccountUsage: CodexAccountUsage(
+                lifetimeTokens: 1_000,
+                peakDailyTokens: 200,
+                dailyUsageBuckets: [.init(startDate: "2026-08-31", tokens: 200)]
+            )
         )
     }
 
@@ -94,6 +99,7 @@ struct CodexRateLimitUpdatePolicyTests {
         #expect(merged.credits == base.credits)
         #expect(merged.planType == "plus")
         #expect(merged.sourceVersion == "codex-cli/0.1")
+        #expect(merged.codexAccountUsage == base.codexAccountUsage)
     }
 
     @Test("推播真正提供的 metadata 會更新，新 window 依穩定 ID 附加")

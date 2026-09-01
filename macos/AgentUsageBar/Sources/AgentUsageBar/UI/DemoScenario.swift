@@ -35,27 +35,33 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
         }
     }
 
-    func state(now: Date = Date()) -> UsageDisplayState {
+    func state(now: Date = Date(), provider: ProviderKind = .claude) -> UsageDisplayState {
         switch self {
         case .starting:
             return .starting
         case .healthy:
-            return .current(Self.snapshot(sessionUsed: 29, weeklyUsed: 62, now: now))
+            return .current(Self.snapshot(sessionUsed: 29, weeklyUsed: 62, now: now, provider: provider))
         case .betweenWindows:
-            return .current(Self.betweenWindowsSnapshot(now: now))
+            return .current(Self.betweenWindowsSnapshot(now: now, provider: provider))
         case .refreshing:
             return .refreshing(previous: Self.snapshot(
                 sessionUsed: 29,
                 weeklyUsed: 62,
-                now: now.addingTimeInterval(-90)
+                now: now.addingTimeInterval(-90),
+                provider: provider
             ))
         case .lowSession:
-            return .current(Self.snapshot(sessionUsed: 92, weeklyUsed: 74, now: now))
+            return .current(Self.snapshot(sessionUsed: 92, weeklyUsed: 74, now: now, provider: provider))
         case .exhausted:
-            return .current(Self.snapshot(sessionUsed: 100, weeklyUsed: 91, now: now))
+            return .current(Self.snapshot(sessionUsed: 100, weeklyUsed: 91, now: now, provider: provider))
         case .stale:
             return .stale(
-                Self.snapshot(sessionUsed: 44, weeklyUsed: 62, now: now.addingTimeInterval(-1_800)),
+                Self.snapshot(
+                    sessionUsed: 44,
+                    weeklyUsed: 62,
+                    now: now.addingTimeInterval(-1_800),
+                    provider: provider
+                ),
                 reason: .offline
             )
         case .throttled:
@@ -63,7 +69,8 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                 previous: Self.snapshot(
                     sessionUsed: 44,
                     weeklyUsed: 62,
-                    now: now.addingTimeInterval(-420)
+                    now: now.addingTimeInterval(-420),
+                    provider: provider
                 ),
                 until: now.addingTimeInterval(1_380)
             )
@@ -79,10 +86,11 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
     private static func snapshot(
         sessionUsed: Double,
         weeklyUsed: Double,
-        now: Date
+        now: Date,
+        provider: ProviderKind
     ) -> UsageSnapshot {
         UsageSnapshot(
-            provider: .claude,
+            provider: provider,
             sourcePath: .fixture,
             windows: [
                 UsageWindow(
@@ -108,13 +116,14 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                     modelDisplayName: "Opus 5"
                 ),
             ],
-            fetchedAt: now
+            fetchedAt: now,
+            codexAccountUsage: provider == .codex ? Self.codexAccountUsage(now: now) : nil
         )
     }
 
-    private static func betweenWindowsSnapshot(now: Date) -> UsageSnapshot {
+    private static func betweenWindowsSnapshot(now: Date, provider: ProviderKind) -> UsageSnapshot {
         UsageSnapshot(
-            provider: .claude,
+            provider: provider,
             sourcePath: .fixture,
             windows: [
                 UsageWindow(
@@ -132,7 +141,39 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                     isActive: false
                 ),
             ],
-            fetchedAt: now
+            fetchedAt: now,
+            codexAccountUsage: provider == .codex ? Self.codexAccountUsage(now: now) : nil
+        )
+    }
+
+    private static func codexAccountUsage(now: Date) -> CodexAccountUsage {
+        // More than the default 30-day chart range so render checks visibly prove the
+        // UI is slicing provider history rather than drawing every returned bucket.
+        let tokenCounts = (0..<61).map { index in
+            let wave = (index % 11) + 2
+            let trend = index * 650_000
+            return wave * 4_800_000 + trend
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        let finalDay = calendar.startOfDay(for: now)
+        let buckets = tokenCounts.enumerated().map { index, tokens in
+            let offset = index - (tokenCounts.count - 1)
+            let date = calendar.date(byAdding: .day, value: offset, to: finalDay)!
+            return CodexAccountUsage.DailyBucket(
+                startDate: formatter.string(from: date),
+                tokens: tokens
+            )
+        }
+        return CodexAccountUsage(
+            lifetimeTokens: 1_842_500_000,
+            peakDailyTokens: tokenCounts.max(),
+            dailyUsageBuckets: buckets
         )
     }
 

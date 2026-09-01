@@ -319,7 +319,10 @@ private struct ProviderSettingsRow: View {
                 }
 
                 GridRow(alignment: .firstTextBaseline) {
-                    Text("Refresh Interval")
+                    Text(model.displayLanguage.text(
+                        chinese: presenter.provider == .codex ? "額度更新頻率" : "更新頻率",
+                        english: presenter.provider == .codex ? "Quota Refresh" : "Refresh Interval"
+                    ))
                         .foregroundStyle(.secondary)
                     Picker("", selection: $presenter.settings.refreshInterval) {
                         ForEach(RefreshInterval.allCases) { interval in
@@ -335,6 +338,58 @@ private struct ProviderSettingsRow: View {
                     .controlSize(.small)
                     .fixedSize()
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                if presenter.provider == .codex {
+                    GridRow(alignment: .firstTextBaseline) {
+                        Text(model.displayLanguage.text(
+                            chinese: "Token 更新頻率",
+                            english: "Token Refresh"
+                        ))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: $presenter.codexTokenRefreshInterval) {
+                            ForEach(CodexTokenRefreshInterval.allCases) { tokenInterval in
+                                let name = tokenInterval.displayName(language: model.displayLanguage)
+                                Text(verbatim: tokenInterval == .recommended
+                                    ? model.displayLanguage.text(
+                                        chinese: "\(name)（建議）",
+                                        english: "\(name) (recommended)"
+                                    )
+                                    : name)
+                                    .tag(tokenInterval)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    GridRow(alignment: .firstTextBaseline) {
+                        Text(model.displayLanguage.text(
+                            chinese: "Token 圖表範圍",
+                            english: "Token Chart Range"
+                        ))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: Binding(
+                            get: { model.codexTokenHistoryPeriod },
+                            set: { model.codexTokenHistoryPeriod = $0 }
+                        )) {
+                            ForEach(CodexTokenHistoryPeriod.allCases) { period in
+                                Text(verbatim: model.displayLanguage.text(
+                                    chinese: "\(period.rawValue) 天",
+                                    english: "\(period.rawValue) days"
+                                ))
+                                .tag(period)
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
 
                 GridRow(alignment: .firstTextBaseline) {
@@ -362,8 +417,8 @@ private struct ProviderSettingsRow: View {
             let interval = presenter.settings.refreshInterval
             if presenter.provider == .claude {
                 Text(model.displayLanguage.text(
-                    chinese: "每天約 \(interval.requestsPerDay) 次查詢。Anthropic 沒有公布這個端點的查詢頻率上限，以上間隔是保守選擇，不是照規格設的。",
-                    english: "About \(interval.requestsPerDay) requests per day. Anthropic does not publish a request-frequency limit for this endpoint; this interval is a conservative choice, not a documented requirement."
+                    chinese: "每天約 \(interval.refreshesPerDay) 次更新。頻率較高不一定更即時，因為 Claude Code 可能回傳快取資料。",
+                    english: "About \(interval.refreshesPerDay) updates per day. More frequent updates may not be fresher because Claude Code can return cached data."
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -373,9 +428,10 @@ private struct ProviderSettingsRow: View {
                         .foregroundStyle(.orange)
                 }
             } else {
+                let tokenInterval = presenter.codexTokenRefreshInterval
                 Text(model.displayLanguage.text(
-                    chinese: "App Server 會主動通知額度變化；此設定是保險查詢，\(interval.displayName(locale: model.displayLanguage.locale))約為每天 \(interval.requestsPerDay) 次。",
-                    english: "App Server pushes usage-limit changes. This interval is only a fallback poll; \(interval.displayName(locale: model.displayLanguage.locale)) is about \(interval.requestsPerDay) requests per day."
+                    chinese: "額度與 Token 統計使用獨立排程，約每天更新 \(interval.refreshesPerDay) 次與 \(tokenInterval.refreshesPerDay) 次；按「重新整理」會同時更新兩者。圖表範圍只影響顯示，不會刪除 Codex 回傳的資料。",
+                    english: "Quota and token statistics use separate schedules: about \(interval.refreshesPerDay) and \(tokenInterval.refreshesPerDay) updates per day. Refresh updates both. Chart Range affects only what is shown and does not delete Codex data."
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)

@@ -70,6 +70,8 @@ struct CodexAppServerClientTests {
             #expect(snapshot.windows.first { $0.kind == .weeklyAll }?.used.usedPercent == 17)
             #expect(snapshot.planType == "synthetic")
             #expect(snapshot.sourceVersion == "agent-usage-bar-timeout-stub/success")
+            #expect(snapshot.codexAccountUsage?.lifetimeTokens == 1_234)
+            #expect(snapshot.codexAccountUsage?.updatedThrough == "2026-08-31")
 
             await client.stop()
         } catch {

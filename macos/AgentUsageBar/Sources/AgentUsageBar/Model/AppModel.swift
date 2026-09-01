@@ -47,6 +47,13 @@ final class AppModel {
         }
     }
 
+    var codexTokenHistoryPeriod: CodexTokenHistoryPeriod {
+        didSet {
+            guard codexTokenHistoryPeriod != oldValue else { return }
+            SettingsStore.saveCodexTokenHistoryPeriod(codexTokenHistoryPeriod)
+        }
+    }
+
     private(set) var diagnosticEntries: [DiagnosticLogEntry]
 
     var onLayoutChange: (() -> Void)?
@@ -72,6 +79,7 @@ final class AppModel {
         self.displayLanguage = displayLanguage ?? SettingsStore.loadLanguage()
         claudeExecutablePath = SettingsStore.loadClaudeExecutablePath()
         codexExecutablePath = SettingsStore.loadCodexExecutablePath()
+        codexTokenHistoryPeriod = SettingsStore.loadCodexTokenHistoryPeriod()
         let loadedDiagnosticRetention = diagnosticLogStore.loadRetention()
         diagnosticRetention = loadedDiagnosticRetention
         diagnosticEntries = diagnosticLogStore.load(retention: loadedDiagnosticRetention)
@@ -150,7 +158,7 @@ final class AppModel {
     /// for both the shared Codex root and every presenter task to finish. AppKit must not
     /// receive its termination reply before this returns.
     func stop() async {
-        let refreshTasks = presenters.compactMap { $0.beginShutdown() }
+        let refreshTasks = presenters.flatMap { $0.beginShutdown() }
         await CodexAppServerClient.shared.stop()
         for task in refreshTasks {
             await task.value

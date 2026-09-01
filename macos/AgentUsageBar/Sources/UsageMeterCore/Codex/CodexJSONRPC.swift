@@ -19,6 +19,7 @@ enum CodexJSONNumber {
 enum CodexJSONRPCMethod: String, Sendable {
     case initialize
     case rateLimitsRead = "account/rateLimits/read"
+    case accountUsageRead = "account/usage/read"
 }
 
 enum CodexJSONRPCNotificationMethod: String, Sendable {

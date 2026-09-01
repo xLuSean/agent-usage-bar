@@ -49,6 +49,14 @@ while IFS= read -r line; do
             fi
             ;;
 
+        *'"method":"account/usage/read"'*|*'"method":"account\/usage\/read"'*)
+            [ -n "$request_id" ] || exit 69
+            if [ "$mode" = success ]; then
+                printf '%s\n' \
+                    "{\"id\":${request_id},\"result\":{\"summary\":{\"lifetimeTokens\":1234,\"peakDailyTokens\":456},\"dailyUsageBuckets\":[{\"startDate\":\"2026-08-31\",\"tokens\":456}],\"threadUsage\":null}}"
+            fi
+            ;;
+
         *'"method":"initialized"'*)
             ;;
 

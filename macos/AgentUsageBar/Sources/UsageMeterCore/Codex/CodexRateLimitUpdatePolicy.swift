@@ -64,7 +64,10 @@ public enum CodexRateLimitUpdatePolicy {
             rateLimitReachedType: update.rateLimitReachedType ?? base.rateLimitReachedType,
             spendControlReached: update.spendControlReached ?? base.spendControlReached,
             meteredLimitID: update.meteredLimitID ?? base.meteredLimitID,
-            sourceVersion: update.sourceVersion ?? base.sourceVersion
+            sourceVersion: update.sourceVersion ?? base.sourceVersion,
+            // Rate-limit notifications do not carry account token history. Preserve the
+            // last complete read until the next scheduled account usage request.
+            codexAccountUsage: update.codexAccountUsage ?? base.codexAccountUsage
         )
     }
 

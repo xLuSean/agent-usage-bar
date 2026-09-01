@@ -27,11 +27,17 @@ final class ProviderPresenter {
                 rescheduleTimer()
             }
             if enabledChanged {
+                rescheduleCodexTokenTimer()
+            }
+            if enabledChanged {
                 let generation = advanceConfigurationGeneration()
                 if settings.isEnabled {
                     requestRefresh(reason: .manual)
                 } else {
                     pendingRefreshReason = nil
+                    pendingCodexTokenRefreshReason = nil
+                    codexTokenRefreshTask?.cancel()
+                    codexTokenRefreshTask = nil
                     if provider == .codex {
                         Task { [weak self] in
                             guard let self, self.isCurrentConfiguration(generation) else { return }
@@ -41,6 +47,16 @@ final class ProviderPresenter {
                 }
             }
             onVisualChange?()
+        }
+    }
+
+    var codexTokenRefreshInterval: CodexTokenRefreshInterval {
+        didSet {
+            guard provider == .codex,
+                  codexTokenRefreshInterval != oldValue else { return }
+            SettingsStore.saveCodexTokenRefreshInterval(codexTokenRefreshInterval)
+            rescheduleCodexTokenTimer()
+            requestCodexTokenRefresh(reason: .scheduled)
         }
     }
 
@@ -55,9 +71,15 @@ final class ProviderPresenter {
     private var refreshTaskGeneration: UInt64 = 0
     private var pendingRefreshReason: FetchPacing.Reason?
     private var refreshTask: Task<Void, Never>?
+    private var codexTokenRefreshTaskGeneration: UInt64 = 0
+    private var pendingCodexTokenRefreshReason: FetchPacing.Reason?
+    private var codexTokenRefreshTask: Task<Void, Never>?
+    private var codexTokenLastAttemptAt: Date?
+    private var pendingCodexAccountUsage: CodexAccountUsage?
     private let snapshotStore: UsageSnapshotStore
     private let providerFactory: ProviderFactory?
     private var timer: Timer?
+    private var codexTokenTimer: Timer?
     /// Set while the screen is locked or the machine is asleep. Polling an endpoint that
     /// rate limits per token while nobody is looking spends the budget for nothing.
     private var isPaused = false
@@ -87,6 +109,7 @@ final class ProviderPresenter {
     ) {
         self.provider = provider
         self.settings = SettingsStore.load(provider)
+        self.codexTokenRefreshInterval = SettingsStore.loadCodexTokenRefreshInterval()
         self.backoff = RetryBackoff(policy: .forProvider(provider))
         self.snapshotStore = snapshotStore
         self.providerFactory = providerFactory
@@ -106,10 +129,11 @@ final class ProviderPresenter {
     /// Diagnostic-only state injection. Release does not compile `DemoScenario` or any
     /// fixture/live branch into the presenter.
     func applyDemoScenario(_ scenario: DemoScenario) {
-        state = scenario.state()
+        state = scenario.state(provider: provider)
         backoff.reset()
         consecutiveFailures = 0
         cancelScheduledAttempt()
+        cancelCodexTokenScheduledAttempt()
         onVisualChange?()
     }
     #endif
@@ -122,6 +146,7 @@ final class ProviderPresenter {
     func startPolling() {
         subscribeToCodexUpdatesIfNeeded()
         rescheduleTimer()
+        rescheduleCodexTokenTimer()
     }
 
     private func subscribeToCodexUpdatesIfNeeded() {
@@ -184,11 +209,15 @@ final class ProviderPresenter {
 
     private func advanceConfigurationGeneration() -> UInt64 {
         configurationGeneration &+= 1
+        pendingCodexAccountUsage = nil
         return configurationGeneration
     }
 
     func requestRefresh(reason: FetchPacing.Reason) {
         guard settings.isEnabled, !isShuttingDown else { return }
+        if provider == .codex {
+            requestCodexTokenRefresh(reason: reason)
+        }
         if refreshTask != nil {
             if reason == .manual { pendingRefreshReason = .manual }
             return
@@ -215,11 +244,39 @@ final class ProviderPresenter {
         requestRefresh(reason: pendingRefreshReason)
     }
 
+    private func requestCodexTokenRefresh(reason: FetchPacing.Reason) {
+        guard provider == .codex,
+              providerFactory == nil,
+              settings.isEnabled,
+              !isShuttingDown else { return }
+        if codexTokenRefreshTask != nil {
+            if reason == .manual { pendingCodexTokenRefreshReason = .manual }
+            return
+        }
+        codexTokenRefreshTaskGeneration &+= 1
+        let taskGeneration = codexTokenRefreshTaskGeneration
+        codexTokenRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            await self.refreshCodexTokenUsage(reason: reason)
+            self.codexTokenRefreshTaskDidFinish(generation: taskGeneration)
+        }
+    }
+
+    private func codexTokenRefreshTaskDidFinish(generation: UInt64) {
+        guard codexTokenRefreshTaskGeneration == generation else { return }
+        codexTokenRefreshTask = nil
+        guard let pendingCodexTokenRefreshReason else { return }
+        self.pendingCodexTokenRefreshReason = nil
+        guard settings.isEnabled, !isShuttingDown else { return }
+        requestCodexTokenRefresh(reason: pendingCodexTokenRefreshReason)
+    }
+
     func setPaused(_ paused: Bool) {
         guard isPaused != paused else { return }
         isPaused = paused
         if paused {
             cancelScheduledAttempt()
+            cancelCodexTokenScheduledAttempt()
         } else {
             // Coming back from sleep or an unlock, whatever is on screen is old.
             requestRefresh(reason: .scheduled)
@@ -230,6 +287,11 @@ final class ProviderPresenter {
         timer?.invalidate()
         timer = nil
         nextAttemptAt = nil
+    }
+
+    private func cancelCodexTokenScheduledAttempt() {
+        codexTokenTimer?.invalidate()
+        codexTokenTimer = nil
     }
 
     private func rescheduleTimer(
@@ -253,6 +315,25 @@ final class ProviderPresenter {
         // .common so the timer keeps firing while a menu or popover is tracking.
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+    }
+
+    private func rescheduleCodexTokenTimer(
+        after override: TimeInterval? = nil,
+        reason: FetchPacing.Reason = .scheduled
+    ) {
+        cancelCodexTokenScheduledAttempt()
+        guard provider == .codex, settings.isEnabled, !isPaused else { return }
+
+        let delay = override ?? codexTokenRefreshInterval.seconds
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.cancelCodexTokenScheduledAttempt()
+                self.requestCodexTokenRefresh(reason: reason)
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        codexTokenTimer = timer
     }
 
     /// Runs the real fetch → state machine, whichever provider is behind it.
@@ -296,8 +377,22 @@ final class ProviderPresenter {
         lastAttemptAt = Date()
 
         do {
-            let snapshot = try await makeProvider().fetch()
-            guard fetchGeneration == configurationGeneration else { return }
+            var snapshot: UsageSnapshot
+            if provider == .codex, providerFactory == nil {
+                snapshot = try await makeCodexProvider().fetchRateLimits(
+                    preserving: pendingCodexAccountUsage ?? state.snapshot?.codexAccountUsage
+                )
+                guard fetchGeneration == configurationGeneration else { return }
+                // A token response may have completed while the quota read was in
+                // flight. Apply the newest accepted value before publishing.
+                if let pendingCodexAccountUsage {
+                    snapshot = snapshot.replacingCodexAccountUsage(pendingCodexAccountUsage)
+                    self.pendingCodexAccountUsage = nil
+                }
+            } else {
+                snapshot = try await makeProvider().fetch()
+                guard fetchGeneration == configurationGeneration else { return }
+            }
             state = .current(snapshot)
             snapshotStore.save(snapshot)
             backoff.reset()
@@ -323,20 +418,73 @@ final class ProviderPresenter {
         onVisualChange?()
     }
 
-    /// Stops scheduling and cancels the one provider fetch this presenter owns. The
+    /// Refreshes only `account/usage/read`. Its pacing, timer, and persisted timestamp
+    /// are independent from quota; failure leaves the last trusted token reading intact.
+    private func refreshCodexTokenUsage(reason: FetchPacing.Reason) async {
+        guard provider == .codex, settings.isEnabled, !isShuttingDown else { return }
+
+        let decision = FetchPacing.decide(
+            lastAttemptAt: codexTokenLastAttemptAt,
+            storedFetchedAt: state.snapshot?.codexAccountUsage?.fetchedAt
+                ?? pendingCodexAccountUsage?.fetchedAt,
+            interval: codexTokenRefreshInterval.seconds,
+            reason: reason
+        )
+        switch decision {
+        case .fetch:
+            break
+        case .useStored(let freshFor):
+            rescheduleCodexTokenTimer(after: freshFor)
+            return
+        case .tooSoon(let retryAfter):
+            rescheduleCodexTokenTimer(after: max(retryAfter, 1), reason: reason)
+            return
+        }
+
+        let fetchGeneration = configurationGeneration
+        let fetchedAt = Date()
+        codexTokenLastAttemptAt = fetchedAt
+        do {
+            let accountUsage = try await makeCodexProvider().fetchAccountUsage(
+                fetchedAt: fetchedAt
+            )
+            guard fetchGeneration == configurationGeneration else { return }
+            pendingCodexAccountUsage = accountUsage
+            if let mergedState = CodexAccountUsageUpdatePolicy.applying(accountUsage, to: state),
+               let mergedSnapshot = mergedState.snapshot {
+                state = mergedState
+                snapshotStore.save(mergedSnapshot)
+            }
+            rescheduleCodexTokenTimer()
+            onVisualChange?()
+        } catch is CancellationError {
+            return
+        } catch {
+            guard fetchGeneration == configurationGeneration else { return }
+            // This optional surface must not demote quota or erase the previous token
+            // result. Try again on its own normal cadence.
+            rescheduleCodexTokenTimer()
+        }
+    }
+
+    /// Stops scheduling and cancels the provider fetches this presenter owns. The
     /// caller first begins shutdown for every presenter, then stops the shared Codex
-    /// connection so its pending continuation can finish, and finally awaits this task.
-    func beginShutdown() -> Task<Void, Never>? {
-        guard !isShuttingDown else { return refreshTask }
+    /// connection so pending continuations can finish, and finally awaits both tasks.
+    func beginShutdown() -> [Task<Void, Never>] {
+        guard !isShuttingDown else {
+            return [refreshTask, codexTokenRefreshTask].compactMap { $0 }
+        }
         isShuttingDown = true
         _ = advanceConfigurationGeneration()
         pendingRefreshReason = nil
+        pendingCodexTokenRefreshReason = nil
         cancelScheduledAttempt()
+        cancelCodexTokenScheduledAttempt()
         codexUpdatesTask?.cancel()
         codexUpdatesTask = nil
-        let task = refreshTask
-        task?.cancel()
-        return task
+        let tasks = [refreshTask, codexTokenRefreshTask].compactMap { $0 }
+        for task in tasks { task.cancel() }
+        return tasks
     }
 
     private func makeProvider() -> any UsageProvider {
@@ -355,6 +503,10 @@ final class ProviderPresenter {
         case .codex:
             return CodexUsageProvider(configuredExecutablePath: codexExecutablePath())
         }
+    }
+
+    private func makeCodexProvider() -> CodexUsageProvider {
+        CodexUsageProvider(configuredExecutablePath: codexExecutablePath())
     }
 
     func renderModel(locale: Locale = Locale(identifier: "en_US")) -> GaugeRenderModel {

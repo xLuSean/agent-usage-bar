@@ -36,7 +36,8 @@ UsageProvider protocol           fetch() async throws -> UsageSnapshot
   │    ├─ CodexAppServerClient actor  單一長駐 Process、request router、推播
   │    ├─ CodexOutputIngress           callback 前置的有界 FIFO、單一消費者
   │    ├─ CodexJSONLBuffer            拆包／黏包與壞行隔離
-  │    └─ CodexRateLimitDecoder       一般 codex bucket、Credits、schema 容錯
+  │    ├─ CodexRateLimitDecoder       一般 codex bucket、Credits、schema 容錯
+  │    └─ CodexAccountUsageDecoder    官方帳號 Token summary／daily buckets
 
 Debug-only diagnostics
   └─ DemoScenario                    合成狀態；只供 render／self-test，不進 Release
@@ -142,15 +143,15 @@ App 本身也有單一執行個體邊界。`AppInstanceCoordinator` 在使用者
 
 用量資料方面，除了設定值，App 只保存**每個供應商最近一次的讀數**（`UsageSnapshotStore`，寫在 `UserDefaults`）。
 
-這不是當初排除的那種持久化。原本的規則是「不存歷史取樣、不畫時間序列、不做用量預測」，那條仍然成立 —— 這裡永遠只有一筆，每次查詢覆蓋掉前一筆，沒有任何序列可言。
+這不是當初排除的那種持久化。App 仍不累積自己的歷史取樣，也不做預測：這裡永遠只有一筆，新的額度或 Token 統計各自替換 snapshot 裡對應的部分。Codex 最新 snapshot 可以內含 `account/usage/read` 當下回傳的每日 buckets 與獨立 `fetchedAt`，UI 只依 5／10／15／20／30／60 天的顯示偏好取最新切片；完整 snapshot 不因切換畫面範圍而被裁掉。這份 provider-maintained account history 不是由 App 跨次採樣建立的序列。
 
-它存在的理由是限流：App 原本什麼都不留，所以**每次啟動都會立刻發一次請求**。關掉再開十次就是十次請求，而輪詢排程幫不上忙，因為新的行程從空的排程開始。現在啟動時先拿出上次的讀數，只有在它超過輪詢間隔時才去查。
+它存在的理由是限流：App 原本什麼都不留，所以**每次啟動都會立刻發一次請求**。關掉再開十次就是十次請求，而輪詢排程幫不上忙，因為新的行程從空的排程開始。現在啟動時先拿出上次的讀數，額度與 Token 統計分別依自己的時間戳與所選間隔決定是否查詢。
 
-落地的內容是百分比、時間窗、時間戳，以及詳情面板已顯示的 Credits／plan／來源版本等非敏感欄位。Provider 提供的顯示文字在 live decoder 先限制為每欄最多 512 UTF-8 bytes，拒絕控制字元與會改變閱讀方向的格式字元；語意用的 `limitId` 另採 128-byte ASCII 識別字規則。App 不讀 Claude credential；Codex token 完全不離開 App Server。示範用的 fixture 讀數也不會被保存，否則重開之後會看到合成資料裝成真實讀數。
+落地的內容是百分比、時間窗、時間戳、Codex 正規化後的累積／最高單日／每日 Token，以及詳情面板已顯示的 Credits／plan／來源版本等非敏感欄位。Provider 提供的顯示文字在 live decoder 先限制為每欄最多 512 UTF-8 bytes，拒絕控制字元與會改變閱讀方向的格式字元；語意用的 `limitId` 另採 128-byte ASCII 識別字規則。App 不讀 Claude credential；Codex 登入 token 完全不離開 App Server。示範用的 fixture 讀數也不會被保存，否則重開之後會看到合成資料裝成真實讀數。
 
 查詢失敗另由 `DiagnosticLogStore` 保存一份有界紀錄。資料包含 App 產生的 UUID、發生時間、`ProviderKind`、封閉的 `DiagnosticErrorKind`，以及可選的封閉 `DiagnosticErrorDetail`。Detail 只把已知錯誤形狀縮減成 App 自己定義的固定原因代碼；無法辨識的 associated string 一律成為 `unrecognizedResponse`，不保存來源文字。設定頁可展開每筆紀錄，依目前 App 語言從這些封閉值產生完整說明並複製。原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑及 provider metadata 都不能進入紀錄或複製文字。舊版沒有 detail 的紀錄仍可解碼，畫面會明示當時未保存更多細節。預設保留 5 天，使用者可選 3／5／7 天並隨時清除；改期限、啟動與新增時都會 prune，固定最多 200 筆，持久化 JSON 在解碼前另限制為 64 KiB，超限即刪除並視為沒有紀錄。只有通過 configuration-generation guard 的正式 fetch failure 記一筆，pacing skip、舊設定的晚到結果及 malformed Codex advisory push 都不記錄。
 
-磁碟上的 JSON 是另一個輸入邊界，不能因為它曾由 App 寫出就永遠信任。保存與讀回都限制單一 snapshot 最多 64 KiB，並重新驗證所有 provider metadata；讀回時還會確認百分比有限且位於 `0...100`、storage key 與 snapshot provider 一致、來源屬於該 provider、不是 fixture、至少有一個時間窗，而且 `fetchedAt` 不在未來、所有有 reset 的時間窗仍未跨過 60 秒寬限。任一條失敗就當作沒有保存讀數並照常查詢。現行 `.claudeCodeCLI` 快照還必須各有一個 session 與 weekly window，session 缺 reset 只允許 `0%`，weekly 一律要有 reset，與 live decoder 的 fail-closed 規則相同；額外的未知 window kind 可以保留，但仍受文字與 snapshot 大小上限約束。Codex 的 reset 仍依 App Server schema 維持 optional，不套用 Claude 規則。舊 Claude `usageEndpoint`／`messagesFallback` 來源仍可解碼與短暫還原，保留升級相容性，但目前 provider 不會再產生它們。
+磁碟上的 JSON 是另一個輸入邊界，不能因為它曾由 App 寫出就永遠信任。保存與讀回都限制單一 snapshot 最多 64 KiB，並重新驗證所有 provider metadata；讀回時還會確認百分比有限且位於 `0...100`、storage key 與 snapshot provider 一致、來源屬於該 provider、不是 fixture、至少有一個時間窗，而且 `fetchedAt` 不在未來、所有有 reset 的時間窗仍未跨過 60 秒寬限。Codex Token 統計另要求總量非負、每日最多 400 筆、日期為有效且嚴格遞增的 `yyyy-MM-dd`、每日數字非負。任一條失敗就當作沒有保存讀數並照常查詢。現行 `.claudeCodeCLI` 快照還必須各有一個 session 與 weekly window，session 缺 reset 只允許 `0%`，weekly 一律要有 reset，與 live decoder 的 fail-closed 規則相同；額外的未知 window kind 可以保留，但仍受文字與 snapshot 大小上限約束。Codex 的 reset 仍依 App Server schema 維持 optional，不套用 Claude 規則。舊 Claude `usageEndpoint`／`messagesFallback` 來源仍可解碼與短暫還原，保留升級相容性，但目前 provider 不會再產生它們。
 
 ## 9. 查詢節流
 
@@ -173,13 +174,15 @@ Provider 設定改變時，`ProviderPresenter` 會推進自己持有的 configur
 
 ## 10. Codex App Server 生命週期
 
-`CodexAppServerClient.shared` 是 App 內唯一的 Codex 子程序 owner。第一次 `fetch()` 時定位 CLI、以固定 arguments 啟動、完成一次 initialize handshake；之後的查詢共用同一條連線。`account/rateLimits/updated` 由 `AsyncStream` 送回 Codex presenter。
+`CodexAppServerClient.shared` 是 App 內唯一的 Codex 子程序 owner。第一次 read 時定位 CLI、以固定 arguments 啟動、完成一次 initialize handshake；之後的 `account/rateLimits/read` 與 `account/usage/read` 共用同一條連線，但由 presenter 的兩個獨立 timer 與 task 排程。額度沿用 provider 更新頻率（預設 10 分鐘），Token 統計另選 15／30 分鐘或 1／2／3／6 小時（預設 1 小時）；手動更新同時提出兩個 read，App Server actor 仍負責 request ID 與連線序列化。`account/rateLimits/updated` 由 `AsyncStream` 送回 Codex presenter。
 
 每個 App Server generation 也擁有自己的 stdout ingress。readability callback 只把 bytes 放進有界 FIFO；只有 idle 轉為 scheduled 時才建立一個 consumer，consumer 依序交給 actor。停止、重連或 overflow 會關閉該 ingress 並立刻釋放仍排隊的 bytes，舊 generation 不能再送出 result 或 notification。
 
 每個 App Server instance 擁有自己唯一的空白工作目錄。正常停止、timeout、路徑切換或意外退出時，目錄都跟著該精確 `Process` 保留到 Foundation 確認 root child 已退出後才清理；重連建立新的目錄，不會讓新舊程序共用或提前刪除仍在使用的 cwd。
 
-Decoder 可以接受只有 primary 的 sparse 通知；`CodexRateLimitUpdatePolicy` 只把通知實際提供的 window／metadata 合併進上一份完整 snapshot。Presenter 保留原 display-state case 與完整 read 的 `fetchedAt`，保存合併後 snapshot，但不重設 failure／backoff，也不重新安排 10 分鐘 safety poll。沒有可信 base 或 identity 不相容時，局部通知不改變現況。
+Decoder 可以接受只有 primary 的 sparse 通知；`CodexRateLimitUpdatePolicy` 只把通知實際提供的 window／metadata 合併進上一份完整 snapshot，並保留 notification 未攜帶的帳號 Token 統計。`CodexAccountUsageUpdatePolicy` 做相反方向的局部合併：只替換 Token 統計及其時間戳，不改額度、額度 `fetchedAt` 或 display-state case。兩邊失敗都保留另一邊最後可信資料；若 Token 比第一份額度先回來，presenter 暫存正規化結果，等額度 snapshot 建立後再合併。notification 不重設 failure／backoff，也不重新安排任何 timer。沒有可信 base 或 identity 不相容時，局部 notification 不改變現況。
+
+帳號 Token 統計是附加能力。完整 fetch 先取得必要的 rate limits，再讀 account usage；第二步若不支援、逾時或解碼失敗，quota snapshot 仍成功，只有 Token 區塊呈現不可用。`lifetimeTokens` 與 `peakDailyTokens` 直接使用官方 summary，不由 daily buckets 重算；每日數字也直接採用 provider buckets。`threadUsage` 與 cache 拆解不進入 domain model。
 
 `RateLimitWindow` 的 `usedPercent`、`windowDurationMins` 與 `resetsAt` 依 App Server schema 都是整數。Provider 邊界只接受 `0...100` 的整數 `usedPercent`；後兩欄可缺少或為 `null`，但有值時不得截斷小數。異常資料回 `schemaChanged`，不進入 domain model；`UsedPercent` 的 clamp 仍保留為已建立 domain value 的最後一道 UI 防禦。共用 schema 錯誤文案保持 provider-neutral，不會把 Codex 問題誤說成 Claude `/usage` 問題。
 

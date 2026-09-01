@@ -63,6 +63,56 @@ enum MenuBarLayout: String, CaseIterable, Sendable, Identifiable {
     }
 }
 
+/// How much of Codex's provider-maintained daily account history is drawn in the
+/// popover. This is a display preference only; the latest snapshot still retains the
+/// complete bounded response so changing the range never requires another provider
+/// read and never destroys upstream data.
+enum CodexTokenHistoryPeriod: Int, CaseIterable, Sendable, Identifiable {
+    case fiveDays = 5
+    case tenDays = 10
+    case fifteenDays = 15
+    case twentyDays = 20
+    case thirtyDays = 30
+    case sixtyDays = 60
+
+    var id: Int { rawValue }
+}
+
+/// Codex account token statistics move more slowly than quota windows and are returned
+/// as one history payload. Give that read its own user-controlled cadence without
+/// changing the existing quota refresh choices.
+enum CodexTokenRefreshInterval: Int, CaseIterable, Sendable, Identifiable {
+    case fifteenMinutes = 900
+    case thirtyMinutes = 1_800
+    case oneHour = 3_600
+    case twoHours = 7_200
+    case threeHours = 10_800
+    case sixHours = 21_600
+
+    var id: Int { rawValue }
+    var seconds: TimeInterval { TimeInterval(rawValue) }
+    static let recommended = CodexTokenRefreshInterval.oneHour
+
+    func displayName(language: AppLanguage) -> String {
+        switch self {
+        case .fifteenMinutes:
+            language.text(chinese: "15 分鐘", english: "15 minutes")
+        case .thirtyMinutes:
+            language.text(chinese: "30 分鐘", english: "30 minutes")
+        case .oneHour:
+            language.text(chinese: "1 小時", english: "1 hour")
+        case .twoHours:
+            language.text(chinese: "2 小時", english: "2 hours")
+        case .threeHours:
+            language.text(chinese: "3 小時", english: "3 hours")
+        case .sixHours:
+            language.text(chinese: "6 小時", english: "6 hours")
+        }
+    }
+
+    var refreshesPerDay: Int { Int((24 * 60 * 60) / seconds) }
+}
+
 enum SettingsStore {
     private static let version = "v1"
 
@@ -91,6 +141,8 @@ enum SettingsStore {
     private static let languageKey = "\(version).displayLanguage"
     private static let claudeExecutablePathKey = "\(version).claudeExecutablePath"
     private static let codexExecutablePathKey = "\(version).codexExecutablePath"
+    private static let codexTokenHistoryDaysKey = "\(version).codexTokenHistoryDays"
+    private static let codexTokenRefreshIntervalKey = "\(version).codexTokenRefreshInterval"
 
     /// Blank means auto-detect. A GUI app's PATH is not the shell's, so an unusual
     /// install location has to be nameable.
@@ -124,6 +176,34 @@ enum SettingsStore {
 
     static func saveCodexExecutablePath(_ path: String, defaults: UserDefaults = .standard) {
         defaults.set(path, forKey: codexExecutablePathKey)
+    }
+
+    static func loadCodexTokenHistoryPeriod(
+        defaults: UserDefaults = .standard
+    ) -> CodexTokenHistoryPeriod {
+        let raw = defaults.object(forKey: codexTokenHistoryDaysKey) as? Int
+        return raw.flatMap(CodexTokenHistoryPeriod.init(rawValue:)) ?? .thirtyDays
+    }
+
+    static func saveCodexTokenHistoryPeriod(
+        _ period: CodexTokenHistoryPeriod,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(period.rawValue, forKey: codexTokenHistoryDaysKey)
+    }
+
+    static func loadCodexTokenRefreshInterval(
+        defaults: UserDefaults = .standard
+    ) -> CodexTokenRefreshInterval {
+        let raw = defaults.object(forKey: codexTokenRefreshIntervalKey) as? Int
+        return raw.flatMap(CodexTokenRefreshInterval.init(rawValue:)) ?? .recommended
+    }
+
+    static func saveCodexTokenRefreshInterval(
+        _ interval: CodexTokenRefreshInterval,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(interval.rawValue, forKey: codexTokenRefreshIntervalKey)
     }
 
     static func defaultEnabled(for provider: ProviderKind) -> Bool {

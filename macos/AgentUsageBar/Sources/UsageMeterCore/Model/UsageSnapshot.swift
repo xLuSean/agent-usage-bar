@@ -107,8 +107,9 @@ public struct UsageCredits: Sendable, Hashable, Codable {
     }
 }
 
-/// One complete reading. Each fetch replaces the last; nothing is accumulated,
-/// so there is no sample store and no forecast.
+/// One complete reading. Each fetch replaces the last; nothing is accumulated locally,
+/// so there is no sample store and no forecast. Codex may include provider-maintained
+/// daily account totals inside this latest snapshot.
 public struct UsageSnapshot: Sendable, Hashable, Codable {
     public let provider: ProviderKind
     public let sourcePath: UsageSourcePath
@@ -122,6 +123,9 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
     public let spendControlReached: Bool?
     public let meteredLimitID: String?
     public let sourceVersion: String?
+    /// Optional Codex account totals from `account/usage/read`. Never derived from local
+    /// task files. `nil` means the endpoint or a trustworthy payload was unavailable.
+    public let codexAccountUsage: CodexAccountUsage?
 
     public init(
         provider: ProviderKind,
@@ -133,7 +137,8 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
         rateLimitReachedType: String? = nil,
         spendControlReached: Bool? = nil,
         meteredLimitID: String? = nil,
-        sourceVersion: String? = nil
+        sourceVersion: String? = nil,
+        codexAccountUsage: CodexAccountUsage? = nil
     ) {
         self.provider = provider
         self.sourcePath = sourcePath
@@ -145,6 +150,7 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
         self.spendControlReached = spendControlReached
         self.meteredLimitID = meteredLimitID
         self.sourceVersion = sourceVersion
+        self.codexAccountUsage = codexAccountUsage
     }
 
     /// The window the menu bar gauge shows: the **shortest** one, not the binding one.
@@ -177,5 +183,23 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
             if rank(lhs.kind) != rank(rhs.kind) { return rank(lhs.kind) < rank(rhs.kind) }
             return (lhs.modelDisplayName ?? "") < (rhs.modelDisplayName ?? "")
         }
+    }
+
+    /// Replaces only Codex's independently refreshed account-token statistics. Quota
+    /// fields and their successful-read timestamp remain authoritative and unchanged.
+    public func replacingCodexAccountUsage(_ accountUsage: CodexAccountUsage) -> UsageSnapshot {
+        UsageSnapshot(
+            provider: provider,
+            sourcePath: sourcePath,
+            windows: windows,
+            fetchedAt: fetchedAt,
+            credits: credits,
+            planType: planType,
+            rateLimitReachedType: rateLimitReachedType,
+            spendControlReached: spendControlReached,
+            meteredLimitID: meteredLimitID,
+            sourceVersion: sourceVersion,
+            codexAccountUsage: accountUsage
+        )
     }
 }

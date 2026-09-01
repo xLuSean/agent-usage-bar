@@ -1,6 +1,6 @@
-# Codex 的額度資料來源
+# Codex 的額度與 Token 統計資料來源
 
-App 如何取得 Codex 的方案額度：唯讀方法、欄位、更新方式與失敗邊界。Claude 那一側見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md)；兩者共用的安全、狀態與視覺語言見 [SAFETY.md](SAFETY.md)、[ARCHITECTURE.md](ARCHITECTURE.md) 與 [UI_SPEC.md](UI_SPEC.md)。
+App 如何取得 Codex 的方案額度與帳號 Token 統計：唯讀方法、欄位、更新方式與失敗邊界。Claude 那一側見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md)；兩者共用的安全、狀態與視覺語言見 [SAFETY.md](SAFETY.md)、[ARCHITECTURE.md](ARCHITECTURE.md) 與 [UI_SPEC.md](UI_SPEC.md)。
 
 **App 自己不發任何 HTTP 請求，也不讀取 Codex 的 token 或本機資料庫。** 數字來自官方 Codex CLI 的 [App Server](https://learn.chatgpt.com/docs/app-server)，透過本機 stdio 的唯讀 JSON-RPC 取得。
 
@@ -23,6 +23,7 @@ App 能建構的 outbound method 只有：
 | request | `initialize` | 宣告 client 名稱與版本，取得 App Server user-agent |
 | notification | `initialized` | 完成 handshake |
 | request | `account/rateLimits/read` | 讀取目前的方案額度 |
+| request | `account/usage/read` | 讀取官方帳號 Token 總量與每日 buckets |
 
 額度查詢的 wire message 是：
 
@@ -30,7 +31,13 @@ App 能建構的 outbound method 只有：
 {"method":"account/rateLimits/read","id":2}
 ```
 
-`CodexJSONRPCMethod` 與 `CodexJSONRPCNotificationMethod` 是封閉 enum，沒有任意 method 或 params 入口。官方 App Server 還有登入、token activity、寄信與消耗 reset credit 等其他方法，但本 App 不實作也不呼叫它們；尤其不使用 `account/usage/read` 建立活動歷史，也不呼叫 `account/rateLimitResetCredit/consume` 或 `account/sendAddCreditsNudgeEmail` 改變帳號狀態。
+Token 統計的 wire message 同樣不帶 params：
+
+```json
+{"method":"account/usage/read","id":3}
+```
+
+`CodexJSONRPCMethod` 與 `CodexJSONRPCNotificationMethod` 是封閉 enum，沒有任意 method 或 params 入口。官方 App Server 還有登入、寄信與消耗 reset credit 等其他方法，但本 App 不實作也不呼叫它們；尤其不呼叫 `account/rateLimitResetCredit/consume` 或 `account/sendAddCreditsNudgeEmail` 改變帳號狀態。
 
 ## 3. 哪些欄位進入 App
 
@@ -49,6 +56,20 @@ App 優先讀 `rateLimitsByLimitId.codex`；沒有時才使用官方保留的向
 
 `rateLimitResetCredits` 可能出現在官方回應中，但 App 不解析或保存 opaque credit ID，也沒有 consume 方法。
 
+`account/usage/read` 只取以下欄位：
+
+| 欄位 | App 的處理 |
+|---|---|
+| `summary.lifetimeTokens` | 官方回傳的帳號累積 Token；可為 `null`，不自行加總 daily buckets |
+| `summary.peakDailyTokens` | 官方回傳的最高單日 Token；可為 `null` |
+| `dailyUsageBuckets[].startDate` | 必須是有效且唯一的 `yyyy-MM-dd` 日期，排序後用於圖表與「資料統計至」 |
+| `dailyUsageBuckets[].tokens` | 官方回傳的該日 Token，必須是非負整數 |
+| `threadUsage` | 不使用、不保存；App 不接受 session ID，也不顯示逐 task 資料 |
+
+每日資料最多接受 400 筆，避免不受控的 provider array 撐大 UI 與跨啟動快照。回應未提供 cached-input Token 欄位，因此 App 不會聲稱圖表含有可獨立驗證的 cache 拆解，也不改讀 task JSONL 補算。
+
+圖表只是這份最新 snapshot 的顯示切片：預設最近 30 天，可選 5／10／15／20／30／60 天，不會裁掉或重寫 provider 回傳的 buckets。面板的「今天」以這台 Mac 的當地日曆日期尋找同名 `startDate`；找不到時顯示「尚未回報」，不把缺值解讀成 0。`資料統計至` 仍使用完整 snapshot 的最新 bucket，因此能清楚呈現像 9/1 只統計至 8/31 的上游延遲。
+
 JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精確檢查。小數不會被截斷成看似合法的整數；範圍外、非整數或錯誤型別會回 `schemaChanged`，不讓共用 `UsedPercent` clamp 把壞資料畫成可信的 0%／100%。
 
 ## 4. 推播不是完整查詢
@@ -59,6 +80,7 @@ JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精�
 
 - 只更新 notification 實際提供且 window identity 相符的欄位。
 - 缺少或 `null` 的 optional metadata 不會清掉已知的 weekly、Credits、plan 或來源版本。
+- notification 不含帳號 Token 統計，因此會保留上次完整 `account/usage/read` 的正規化結果。
 - 保留原本的 display-state case、完整查詢的 `fetchedAt`、失敗 backoff 與 10 分鐘保險查詢。
 - 沒有可信 base snapshot，或 limit identity 不相容時，忽略局部 notification。
 
@@ -75,15 +97,15 @@ JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精�
 
 ## 6. 更新頻率與資料新鮮度
 
-通知是主要的即時更新來源；預設每 10 分鐘另做一次完整 `account/rateLimits/read`，用來校正漏掉、延遲或內容不完整的 notification。任何來源仍受 `FetchPacing` 的 20 秒防連點底線約束。
+通知是額度的主要即時更新來源。`account/rateLimits/read` 另依原本的額度頻率做保險查詢，預設每 10 分鐘；`account/usage/read` 使用獨立 Token 更新頻率，預設 1 小時，可選 15／30 分鐘或 1／2／3／6 小時。兩者共用同一條 App Server 連線，但有各自的 timer、Task、上次成功時間與 `FetchPacing` 判斷。按「重新整理」會同時要求兩者；20 秒防連點底線仍分別適用。
 
-失敗時從 60 秒開始指數退避，最高 15 分鐘。OpenAI 官方文件描述 read 與 updated notification，但目前沒有為這個唯讀 method 指定最低輪詢間隔、每分鐘上限或固定懲罰窗。10 分鐘 safety poll 與 15 分鐘退避上限是本 App 的保守策略，不是官方限制。
+額度失敗時從 60 秒開始指數退避，最高 15 分鐘；Token 統計失敗不降級額度，也不清除舊 Token 統計，下一次依自己的正常間隔再試。OpenAI 官方文件描述 read 與 updated notification，但目前沒有為這些唯讀 method 指定最低輪詢間隔、每分鐘上限或固定懲罰窗。預設頻率與額度退避上限是本 App 的保守策略，不是官方限制。
 
-完整 read 成功時才更新 `fetchedAt`。notification 不重設這個時間，也不延後 safety poll；查詢失敗時，共用狀態會把最後一筆資料明示為 stale，而不是讓局部推播把它升級成「最新」。
+額度 read 成功才會建立可顯示的完整 snapshot；Token 統計是獨立附加能力，可以在已有額度後單獨替換。版本不支援、逾時或 schema 不可信時不會丟掉已取得的額度或上一份可信 Token 統計。Snapshot 的 `fetchedAt` 代表額度 read 時間，`CodexAccountUsage.fetchedAt` 代表 Token 統計 read 時間；每日資料另以最新 bucket 的日期標示「資料統計至」。notification 不重設任何 read 時間，也不延後排程。
 
 ## 7. Process recovery
 
-`CodexAppServerClient.shared` 是 App 內唯一的 App Server owner。initialize 最長等 10 秒，rate-limit read 最長等 15 秒。意外退出或 request timeout 時，client 會讓 exact owned connection 失效；逾時的 request 保留精確 `codexRequestTimedOut`，其他 pending request 以連線不可用結束。下一次 fetch 會啟動新程序並重新 handshake。
+`CodexAppServerClient.shared` 是 App 內唯一的 App Server owner。initialize 最長等 10 秒，每個 read 最長等 15 秒。意外退出或 request timeout 時，client 會讓 exact owned connection 失效；逾時的 request 保留精確 `codexRequestTimedOut`，其他 pending request 以連線不可用結束。下一次 fetch 會啟動新程序並重新 handshake。
 
 停用 Codex、變更 CLI 路徑、結束 App 或捨棄故障連線時，只處理這個 client 自己建立的精確 `Process`：
 
@@ -106,14 +128,14 @@ App Server 回報未登入時，介面只請使用者自行在 Codex CLI 或 Cod
 
 **已驗證**
 
-- 目前官方 App Server 文件確認 stdio JSONL、initialize handshake、`account/rateLimits/read`／`updated`、multi-bucket 與各 rate-limit 欄位。
+- 目前官方 App Server 文件確認 stdio JSONL、initialize handshake、`account/rateLimits/read`／`updated`、`account/usage/read`、multi-bucket 與相關欄位。
 - 本機 `codex-cli 0.148.0`／`0.149.0` 產生的版本化 schema，確認 `usedPercent` 為必填整數，`windowDurationMins`／`resetsAt` 為 nullable 整數。暫存 schema 未寫入 repo。
-- 自動測試涵蓋 multi-bucket、相容 fallback、sparse notification 合併、Credits、未知欄位、壞型別、數值範圍、request routing、十萬個 tiny stdout callbacks 的單一有界消費、兩層 4 MB 上限、timeout recovery、raw error 清理與抗拒 `SIGTERM` 的 child。
+- 自動測試涵蓋 multi-bucket、相容 fallback、Token summary／daily bucket 正規化、sparse notification 合併保留 Token 統計、Credits、未知欄位、壞型別、數值範圍、request routing、十萬個 tiny stdout callbacks 的單一有界消費、兩層 4 MB 上限、timeout recovery、raw error 清理與抗拒 `SIGTERM` 的 child。
 - 2026-08-20 的實機 App 成功顯示資料狀態「最新」、來源「Codex app-server」與真實使用比例。原始 response 未被保存。
 
 **未驗證**
 
 - 官方沒有提供本 App 可直接套用的最低安全輪詢間隔或固定限流懲罰窗。
-- 自動化測試不接觸真實 Codex 帳號，也不保存真實 response；實機成功證據不是每次 build 都重跑的測試。
+- 自動化測試不接觸真實 Codex 帳號，也不保存真實 response；實機成功證據不是每次 build 都重跑的測試。帳號 Token 統計端點的實機觀察只用於確認 schema，不把真實數字寫進 repo。
 - 其他 limit ID 的產品語意尚未決定，因此目前只顯示一般 `codex` bucket。
 - 不同合法安裝方式的簽章狀態尚未盤點，因此 executable locator 不做 vendor identity 驗證。

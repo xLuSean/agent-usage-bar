@@ -5,26 +5,44 @@ import Testing
 @Suite("Codex provider 與 executable 定位")
 struct CodexProviderTests {
     private actor FakeReader: CodexAppServerReading {
-        let response: CodexAppServerRead
-        private(set) var receivedPath: String?
+        let rateLimitResponse: CodexAppServerRead
+        let accountUsageResponse: CodexAppServerRead?
+        private(set) var receivedPaths: [String?] = []
 
-        init(response: CodexAppServerRead) { self.response = response }
-
-        func readRateLimits(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
-            receivedPath = configuredExecutablePath
-            return response
+        init(rateLimitResponse: CodexAppServerRead, accountUsageResponse: CodexAppServerRead?) {
+            self.rateLimitResponse = rateLimitResponse
+            self.accountUsageResponse = accountUsageResponse
         }
 
-        func path() -> String? { receivedPath }
+        func readRateLimits(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
+            receivedPaths.append(configuredExecutablePath)
+            return rateLimitResponse
+        }
+
+        func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
+            receivedPaths.append(configuredExecutablePath)
+            guard let accountUsageResponse else {
+                throw UsageError.codexVersionIncompatible("Synthetic account usage unavailable")
+            }
+            return accountUsageResponse
+        }
+
+        func paths() -> [String?] { receivedPaths }
     }
 
     @Test("provider 只透過 client 取資料")
     func providerBoundary() async throws {
         let payload = Data(#"{"rateLimits":{"limitId":"codex","primary":{"usedPercent":44,"windowDurationMins":300,"resetsAt":1730947200}}}"#.utf8)
-        let fake = FakeReader(response: CodexAppServerRead(
-            payload: payload,
-            serverUserAgent: "codex-cli/test"
-        ))
+        let fake = FakeReader(
+            rateLimitResponse: CodexAppServerRead(
+                payload: payload,
+                serverUserAgent: "codex-cli/test"
+            ),
+            accountUsageResponse: CodexAppServerRead(
+                payload: Data(#"{"summary":{"lifetimeTokens":1234,"peakDailyTokens":456},"dailyUsageBuckets":[{"startDate":"2026-08-31","tokens":456}]}"#.utf8),
+                serverUserAgent: "codex-cli/test"
+            )
+        )
         let provider = CodexUsageProvider(
             configuredExecutablePath: "/test/codex",
             client: fake
@@ -33,7 +51,52 @@ struct CodexProviderTests {
         let snapshot = try await provider.fetch()
         #expect(snapshot.representativeWindow?.used.usedPercent == 44)
         #expect(snapshot.sourceVersion == "codex-cli/test")
-        #expect(await fake.path() == "/test/codex")
+        #expect(snapshot.codexAccountUsage?.lifetimeTokens == 1_234)
+        #expect(snapshot.codexAccountUsage?.updatedThrough == "2026-08-31")
+        #expect(await fake.paths() == ["/test/codex", "/test/codex"])
+    }
+
+    @Test("帳號 Token 統計不可用時仍保留額度讀數")
+    func optionalAccountUsageDoesNotDemoteQuota() async throws {
+        let payload = Data(#"{"rateLimits":{"limitId":"codex","primary":{"usedPercent":44}}}"#.utf8)
+        let fake = FakeReader(
+            rateLimitResponse: CodexAppServerRead(payload: payload, serverUserAgent: nil),
+            accountUsageResponse: nil
+        )
+
+        let snapshot = try await CodexUsageProvider(client: fake).fetch()
+
+        #expect(snapshot.representativeWindow?.used.usedPercent == 44)
+        #expect(snapshot.codexAccountUsage == nil)
+    }
+
+    @Test("額度與 Token 統計可以各自查詢並保留各自的時間")
+    func independentReads() async throws {
+        let quotaPayload = Data(#"{"rateLimits":{"limitId":"codex","primary":{"usedPercent":44}}}"#.utf8)
+        let fake = FakeReader(
+            rateLimitResponse: CodexAppServerRead(payload: quotaPayload, serverUserAgent: nil),
+            accountUsageResponse: CodexAppServerRead(
+                payload: Data(#"{"summary":{"lifetimeTokens":1234},"dailyUsageBuckets":[]}"#.utf8),
+                serverUserAgent: nil
+            )
+        )
+        let provider = CodexUsageProvider(configuredExecutablePath: "/test/codex", client: fake)
+        let oldTokenReading = CodexAccountUsage(
+            lifetimeTokens: 900,
+            peakDailyTokens: nil,
+            dailyUsageBuckets: [],
+            fetchedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )
+
+        let quota = try await provider.fetchRateLimits(preserving: oldTokenReading)
+        #expect(quota.codexAccountUsage == oldTokenReading)
+        #expect(await fake.paths() == ["/test/codex"])
+
+        let tokenFetchedAt = Date(timeIntervalSinceReferenceDate: 200)
+        let token = try await provider.fetchAccountUsage(fetchedAt: tokenFetchedAt)
+        #expect(token.lifetimeTokens == 1_234)
+        #expect(token.fetchedAt == tokenFetchedAt)
+        #expect(await fake.paths() == ["/test/codex", "/test/codex"])
     }
 
     @Test("明確路徑必須是可執行的一般檔案")
@@ -101,7 +164,7 @@ struct CodexProviderTests {
         )
         for key in [
             "credits", "planType", "rateLimitReachedType", "spendControlReached",
-            "meteredLimitID", "sourceVersion",
+            "meteredLimitID", "sourceVersion", "codexAccountUsage",
         ] {
             legacyObject.removeValue(forKey: key)
         }

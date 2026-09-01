@@ -54,10 +54,10 @@ public enum RefreshInterval: Int, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// Roughly how many requests a day this interval produces. Shown for every option,
-    /// because the number is the argument — it makes the trade-off concrete without
-    /// anyone having to do arithmetic in their head.
-    public var requestsPerDay: Int { Int((24 * 60 * 60) / seconds) }
+    /// Roughly how many scheduled refresh cycles a day this interval produces. A cycle
+    /// may contain more than one local provider read, so it must not be described as a
+    /// network-request count.
+    public var refreshesPerDay: Int { Int((24 * 60 * 60) / seconds) }
 
     /// Shown next to the choice rather than blocking it. It is the user's account.
     public var caution: String? {

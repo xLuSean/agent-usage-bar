@@ -16,6 +16,8 @@ struct UsagePopoverView: View {
     /// attention, so it won every time and the working provider became unreachable.
     let presenters: [ProviderPresenter]
     let language: AppLanguage
+    let codexTokenHistoryPeriod: CodexTokenHistoryPeriod
+    let now: Date
     let onOpenSettings: () -> Void
     /// The controller measures the unscrolled view first. Scrolling is enabled only
     /// when the natural height is taller than the current screen can display.
@@ -24,11 +26,15 @@ struct UsagePopoverView: View {
     init(
         presenters: [ProviderPresenter],
         language: AppLanguage = .english,
+        codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
+        now: Date = Date(),
         allowsScrolling: Bool = true,
         onOpenSettings: @escaping () -> Void
     ) {
         self.presenters = presenters
         self.language = language
+        self.codexTokenHistoryPeriod = codexTokenHistoryPeriod
+        self.now = now
         self.allowsScrolling = allowsScrolling
         self.onOpenSettings = onOpenSettings
     }
@@ -36,12 +42,16 @@ struct UsagePopoverView: View {
     init(
         presenter: ProviderPresenter,
         language: AppLanguage = .english,
+        codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
+        now: Date = Date(),
         allowsScrolling: Bool = true,
         onOpenSettings: @escaping () -> Void
     ) {
         self.init(
             presenters: [presenter],
             language: language,
+            codexTokenHistoryPeriod: codexTokenHistoryPeriod,
+            now: now,
             allowsScrolling: allowsScrolling,
             onOpenSettings: onOpenSettings
         )
@@ -72,7 +82,12 @@ struct UsagePopoverView: View {
                 if index > 0 {
                     Divider().padding(.vertical, 2)
                 }
-                ProviderSection(presenter: presenter, language: language)
+                ProviderSection(
+                    presenter: presenter,
+                    language: language,
+                    codexTokenHistoryPeriod: codexTokenHistoryPeriod,
+                    now: now
+                )
             }
         }
         .padding(14)
@@ -81,8 +96,8 @@ struct UsagePopoverView: View {
     private var footer: some View {
         HStack(spacing: 8) {
             Button("Refresh") {
-                // Refreshes everything on show, not just the first — the button sits
-                // under all of them.
+                // Refreshes both independent Codex reads, plus every other provider —
+                // the button sits under all sections and means "refresh everything".
                 for presenter in presenters {
                     presenter.requestRefresh(reason: .manual)
                 }
@@ -100,6 +115,8 @@ struct UsagePopoverView: View {
 private struct ProviderSection: View {
     @Bindable var presenter: ProviderPresenter
     let language: AppLanguage
+    let codexTokenHistoryPeriod: CodexTokenHistoryPeriod
+    let now: Date
     @State private var didCopyLoginCommand = false
 
     private func credentialRecoveryAction(command: String) -> some View {
@@ -137,8 +154,107 @@ private struct ProviderSection: View {
                 credentialRecoveryAction(command: command)
             }
             windowsSection
+            if presenter.provider == .codex, let snapshot = presenter.state.snapshot {
+                codexTokenUsageSection(snapshot: snapshot)
+            }
             dataStatusSection
         }
+    }
+
+    @ViewBuilder
+    private func codexTokenUsageSection(snapshot: UsageSnapshot) -> some View {
+        Divider()
+        VStack(alignment: .leading, spacing: 8) {
+            Text(language.text(chinese: "帳號 Token 用量", english: "Account token usage"))
+                .font(.callout)
+                .bold()
+
+            if let usage = snapshot.codexAccountUsage,
+               usage.lifetimeTokens != nil || usage.peakDailyTokens != nil
+                    || !usage.dailyUsageBuckets.isEmpty {
+                LabeledRow(
+                    language.text(chinese: "今天", english: "Today"),
+                    usage.tokens(on: now).map(formattedTokenCount)
+                        ?? language.text(chinese: "尚未回報", english: "Not reported yet")
+                )
+                if let lifetimeTokens = usage.lifetimeTokens {
+                    LabeledRow(
+                        language.text(chinese: "累積 Token", english: "Lifetime tokens"),
+                        formattedTokenCount(lifetimeTokens)
+                    )
+                }
+                if let peakDailyTokens = usage.peakDailyTokens {
+                    LabeledRow(
+                        language.text(chinese: "最高單日", english: "Peak day"),
+                        formattedTokenCount(peakDailyTokens)
+                    )
+                }
+                if !usage.dailyUsageBuckets.isEmpty {
+                    let visibleBuckets = usage.mostRecentDailyBuckets(
+                        limit: codexTokenHistoryPeriod.rawValue
+                    )
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(language.text(
+                            chinese: "每日用量（\(visibleBuckets.count) 天）",
+                            english: "Daily usage (\(visibleBuckets.count) days)"
+                        ))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        DailyTokenChart(
+                            buckets: visibleBuckets,
+                            tint: Color(presenter.settings.identityColor.nsColor),
+                            language: language
+                        )
+                    }
+                }
+                if let updatedThrough = usage.updatedThrough {
+                    LabeledRow(
+                        language.text(chinese: "資料統計至", english: "Data through"),
+                        formattedUsageDate(updatedThrough)
+                    )
+                }
+                if let fetchedAt = usage.fetchedAt {
+                    LabeledRow(
+                        language.text(chinese: "Token 更新時間", english: "Token updated"),
+                        TimeFormatting.dateAndTime(fetchedAt, locale: language.locale)
+                    )
+                }
+            } else {
+                Text(language.text(
+                    chinese: "目前的 Codex App Server 沒有提供可信的帳號 Token 統計；額度資料仍可正常使用。",
+                    english: "The current Codex App Server did not provide trustworthy account token statistics. Quota data remains available."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+        }
+        .opacity(presenter.state.isDataTrustworthyAsCurrent ? 1 : 0.72)
+    }
+
+    private func formattedTokenCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = language.locale
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        formatter.usesGroupingSeparator = true
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    private func formattedUsageDate(_ value: String) -> String {
+        let parts = value.split(separator: "-").compactMap { Int(String($0)) }
+        guard parts.count == 3 else { return value }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(
+            year: parts[0], month: parts[1], day: parts[2]
+        )) else { return value }
+        let formatter = DateFormatter()
+        formatter.locale = language.locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate("yMMMd")
+        return formatter.string(from: date)
     }
 
     private var header: some View {
@@ -256,6 +372,166 @@ private struct ProviderSection: View {
         }
     }
 
+}
+
+private struct DailyTokenChart: View {
+    let buckets: [CodexAccountUsage.DailyBucket]
+    let tint: Color
+    let language: AppLanguage
+    @State private var hoveredBucketIndex: Int?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            GeometryReader { geometry in
+                ZStack(alignment: .topLeading) {
+                    Canvas { context, size in
+                        var baseline = Path()
+                        baseline.move(to: CGPoint(x: 0, y: size.height - 0.5))
+                        baseline.addLine(to: CGPoint(x: size.width, y: size.height - 0.5))
+                        context.stroke(baseline, with: .color(.secondary.opacity(0.25)))
+
+                        guard let maximum = buckets.map(\.tokens).max(), maximum > 0 else { return }
+                        let gap: CGFloat = buckets.count > 200 ? 0 : (buckets.count > 80 ? 0.5 : 1)
+                        let availableWidth = max(0, size.width - gap * CGFloat(max(0, buckets.count - 1)))
+                        let barWidth = max(0.5, availableWidth / CGFloat(buckets.count))
+
+                        for (index, bucket) in buckets.enumerated() {
+                            let fraction = CGFloat(bucket.tokens) / CGFloat(maximum)
+                            let height = max(bucket.tokens == 0 ? 0 : 1, size.height * fraction)
+                            let rect = CGRect(
+                                x: CGFloat(index) * (barWidth + gap),
+                                y: size.height - height,
+                                width: barWidth,
+                                height: height
+                            )
+                            let barColor = hoveredBucketIndex == nil || hoveredBucketIndex == index
+                                ? tint
+                                : tint.opacity(0.45)
+                            context.fill(
+                                Path(roundedRect: rect, cornerRadius: min(1.5, barWidth / 2)),
+                                with: .color(barColor)
+                            )
+                        }
+                    }
+
+                    if let bucket = hoveredBucket {
+                        Text(verbatim: tooltipText(for: bucket))
+                            .font(.caption2)
+                            .monospacedDigit()
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color.secondary.opacity(0.22), lineWidth: 0.5)
+                            }
+                            .frame(
+                                maxWidth: .infinity,
+                                maxHeight: .infinity,
+                                alignment: tooltipAlignment
+                            )
+                            .padding(4)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let location):
+                        hoveredBucketIndex = bucketIndex(
+                            at: location.x,
+                            chartWidth: geometry.size.width
+                        )
+                    case .ended:
+                        hoveredBucketIndex = nil
+                    }
+                }
+            }
+            .frame(height: 64)
+            .accessibilityLabel(language.text(
+                chinese: "Codex 每日 Token 用量長條圖，共 \(buckets.count) 天",
+                english: "Codex daily token usage bar chart for \(buckets.count) days"
+            ))
+            .accessibilityHint(language.text(
+                chinese: "將滑鼠移到長條上可查看日期與 Token 數",
+                english: "Move the pointer over a bar to see its date and token count"
+            ))
+
+            if let first = buckets.first?.startDate, let last = buckets.last?.startDate {
+                HStack {
+                    Text(verbatim: shortDate(first))
+                    Spacer()
+                    Text(verbatim: shortDate(last))
+                }
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var hoveredBucket: CodexAccountUsage.DailyBucket? {
+        guard let hoveredBucketIndex, buckets.indices.contains(hoveredBucketIndex) else {
+            return nil
+        }
+        return buckets[hoveredBucketIndex]
+    }
+
+    private var tooltipAlignment: Alignment {
+        guard let hoveredBucketIndex else { return .topLeading }
+        return hoveredBucketIndex < buckets.count / 2 ? .topLeading : .topTrailing
+    }
+
+    private func bucketIndex(at x: CGFloat, chartWidth: CGFloat) -> Int? {
+        guard !buckets.isEmpty, chartWidth > 0, x >= 0, x <= chartWidth else {
+            return nil
+        }
+        let rawIndex = Int((x / chartWidth) * CGFloat(buckets.count))
+        return min(rawIndex, buckets.count - 1)
+    }
+
+    private func tooltipText(for bucket: CodexAccountUsage.DailyBucket) -> String {
+        let date = fullDate(bucket.startDate)
+        let tokens = formattedTokenCount(bucket.tokens)
+        return language.text(
+            chinese: "\(date)：\(tokens) Token",
+            english: "\(date): \(tokens) tokens"
+        )
+    }
+
+    private func fullDate(_ value: String) -> String {
+        let parts = value.split(separator: "-").compactMap { Int(String($0)) }
+        guard parts.count == 3 else { return value }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        guard let date = calendar.date(from: DateComponents(
+            year: parts[0], month: parts[1], day: parts[2]
+        )) else { return value }
+        let formatter = DateFormatter()
+        formatter.locale = language.locale
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.setLocalizedDateFormatFromTemplate("yMMMd")
+        return formatter.string(from: date)
+    }
+
+    private func formattedTokenCount(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = language.locale
+        formatter.numberStyle = .decimal
+        formatter.maximumFractionDigits = 0
+        formatter.usesGroupingSeparator = true
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
+
+    private func shortDate(_ value: String) -> String {
+        let parts = value.split(separator: "-").compactMap { Int(String($0)) }
+        guard parts.count == 3 else { return value }
+        return language.text(
+            chinese: "\(parts[1])月\(parts[2])日",
+            english: "\(parts[1])/\(parts[2])"
+        )
+    }
 }
 
 private struct StatusPill: View {

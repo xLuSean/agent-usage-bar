@@ -17,6 +17,7 @@
 1. **建立與目前 source 一致的新候選。** 每次公開收尾若改到 shipping code，都應重新從 `./scripts/release.sh plan` 建立下一個一般候選，不可把舊 DMG 當成新 source 的證據。版本與 build 只讀取 committed metadata；release 工具不執行 reset 或 history rewrite。
 2. **網路恢復偵測。** 斷網後恢復連線時重新整理，不必等下一次排程。
 3. **乾淨 Mac 驗收、自動更新與 universal binary。** 依實際公開需求分階段處理。
+4. **今日 Token 本機估算。** 若 AUB 持續跨日執行，且 Mac 在午夜附近保持喚醒，可保存當地午夜的 `lifetimeTokens` 基準，用目前累積量的差額顯示「今日估算」。若今天才啟動、午夜休眠或上游延遲入帳，必須改標示基準時間或可能誤差，不得把估算冒充官方 daily bucket。只保存日期、總量與取得時間等少量彙總資料，不掃描 task／session；這項功能目前只有產品方向，尚未設計持久化與睡眠恢復契約。
 
 ## 待決
 
@@ -34,7 +35,7 @@
 
 這些是**已決定的非目標**，不是還沒做：
 
-- 不儲存歷史取樣、不繪製時間序列、不做用量預測。
+- 不建立逐回合、逐 task 或連續取樣的本機用量歷史，也不掃描 session 或做用量預測。官方 daily buckets 仍可直接顯示；日後若實作今日估算，只能保存完成估算所需的少量帳號總量基準。
 - 不顯示精確剩餘 token 數 —— 端點提供的是百分比與時間窗，不是固定上限。
 - 不實作 OAuth 登入或 refresh 流程。
 - 不恢復舊的 Keychain／HTTP provider、混合 User-Agent spike 或 `POST /v1/messages` fallback；任何重新引入直接 credential access 的提案都必須重新做安全設計並由維護者明確裁決。

@@ -182,7 +182,10 @@ struct UsageSnapshotStoreTests {
         )
     }
 
-    func codexSnapshot(resetAt: Date?) -> UsageSnapshot {
+    func codexSnapshot(
+        resetAt: Date?,
+        accountUsage: CodexAccountUsage? = nil
+    ) -> UsageSnapshot {
         UsageSnapshot(
             provider: .codex,
             sourcePath: .codexAppServer,
@@ -196,7 +199,8 @@ struct UsageSnapshotStoreTests {
                     durationMinutes: 300
                 ),
             ],
-            fetchedAt: Date().addingTimeInterval(-60)
+            fetchedAt: Date().addingTimeInterval(-60),
+            codexAccountUsage: accountUsage
         )
     }
 
@@ -272,6 +276,48 @@ struct UsageSnapshotStoreTests {
         store.save(snapshot())
         #expect(store.load(.codex) == nil)
         #expect(store.load(.claude) != nil)
+    }
+
+    @Test("Codex 帳號 Token 統計可隨最新 snapshot 往返")
+    func codexAccountUsageRoundTrips() throws {
+        let (store, _) = makeStore()
+        let original = codexSnapshot(
+            resetAt: nil,
+            accountUsage: CodexAccountUsage(
+                lifetimeTokens: 6_012_800_208,
+                peakDailyTokens: 412_649_517,
+                dailyUsageBuckets: [
+                    .init(startDate: "2026-08-30", tokens: 100),
+                    .init(startDate: "2026-08-31", tokens: 200),
+                ]
+            )
+        )
+
+        store.save(original)
+
+        #expect(store.load(.codex) == original)
+    }
+
+    @Test("磁碟注入的無效 Token 日期不能進入畫面")
+    func rejectsInvalidPersistedTokenDate() throws {
+        let (store, defaults) = makeStore()
+        let original = codexSnapshot(
+            resetAt: nil,
+            accountUsage: CodexAccountUsage(
+                lifetimeTokens: 100,
+                peakDailyTokens: 50,
+                dailyUsageBuckets: [.init(startDate: "2026-08-31", tokens: 50)]
+            )
+        )
+        try writeRaw(original, under: .codex, defaults: defaults) { object in
+            var usage = try #require(object["codexAccountUsage"] as? [String: Any])
+            var buckets = try #require(usage["dailyUsageBuckets"] as? [[String: Any]])
+            buckets[0]["startDate"] = "2026-02-30"
+            usage["dailyUsageBuckets"] = buckets
+            object["codexAccountUsage"] = usage
+        }
+
+        #expect(store.load(.codex) == nil)
     }
 
     @Test("磁碟上的範圍外百分比不會被當成可信的 100%")

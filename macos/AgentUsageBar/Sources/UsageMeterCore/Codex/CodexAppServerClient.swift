@@ -13,6 +13,17 @@ public struct CodexAppServerRead: Sendable, Hashable {
 
 public protocol CodexAppServerReading: Sendable {
     func readRateLimits(configuredExecutablePath: String?) async throws -> CodexAppServerRead
+    func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead
+}
+
+public extension CodexAppServerReading {
+    /// Keeps test doubles and older internal readers source-compatible. The provider treats
+    /// this optional capability independently from the required rate-limit reading.
+    func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
+        throw UsageError.codexVersionIncompatible(
+            "The selected Codex App Server does not support account/usage/read."
+        )
+    }
 }
 
 /// The synchronous boundary between `FileHandle` callbacks and the client actor.
@@ -179,6 +190,17 @@ public actor CodexAppServerClient: CodexAppServerReading {
         try await ensureConnected(to: requestedURL)
         let payload = try await sendRequest(
             .rateLimitsRead,
+            params: nil,
+            timeoutSeconds: readTimeoutSeconds
+        )
+        return CodexAppServerRead(payload: payload, serverUserAgent: serverUserAgent)
+    }
+
+    public func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
+        let requestedURL = try CodexExecutableLocator(configuredPath: configuredExecutablePath).locate()
+        try await ensureConnected(to: requestedURL)
+        let payload = try await sendRequest(
+            .accountUsageRead,
             params: nil,
             timeoutSeconds: readTimeoutSeconds
         )

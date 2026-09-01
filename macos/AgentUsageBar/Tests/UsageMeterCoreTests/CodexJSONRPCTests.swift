@@ -25,6 +25,13 @@ struct CodexJSONRPCTests {
             JSONSerialization.jsonObject(with: read) as? [String: Any]
         )
         #expect(readObject["method"] as? String == "account/rateLimits/read")
+
+        let usage = try CodexJSONRPC.request(.accountUsageRead, id: 9)
+        let usageObject = try #require(
+            JSONSerialization.jsonObject(with: usage) as? [String: Any]
+        )
+        #expect(usageObject["method"] as? String == "account/usage/read")
+        #expect(usageObject["params"] == nil)
     }
 
     @Test("initialized 是沒有 id 的 notification")

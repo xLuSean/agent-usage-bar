@@ -8,7 +8,7 @@ App 不做的事，這是硬性清單：
 
 - **不讀取、不寫入鑰匙圈。** 0.3.0 起 App 完全不碰憑證儲存。
 - 不修改 `~/.claude`、`~/.codex` 或任一工具的登入與任務狀態。
-- 不自行呼叫任何 API。Claude 只執行一個固定的唯讀 CLI 指令；Codex 只允許 initialize handshake 與 `account/rateLimits/read`。
+- 不自行呼叫任何 HTTP API。Claude 只執行一個固定的唯讀 CLI 指令；Codex 只允許 initialize handshake、`account/rateLimits/read` 與 `account/usage/read`。
 - 不實作 OAuth 登入或 refresh 流程，也不執行任何登入指令，沿用 Claude Code 既有登入狀態。
 - 不購買 credits、不啟用自動加值、不修改 spend 設定；不呼叫 `account/rateLimitResetCredit/consume` 或 `account/sendAddCreditsNudgeEmail`。
 - 查詢失敗時**不改用**讀取 JSONL、SQLite、transcript 或其他本機檔案的替代方案。
@@ -21,9 +21,9 @@ App 不做的事，這是硬性清單：
 
 ### 1.1 Codex App Server 邊界
 
-Codex provider 不讀取 `auth.json`、任務 JSONL、SQLite、cache 或 token。它以 `Process.executableURL` 直接執行使用者指定或驗證過的 `codex` 一般檔案，arguments 固定為 `app-server --listen stdio://`，不經 shell。協定依據是官方 [Codex App Server 文件](https://learn.chatgpt.com/docs/app-server)；本 App 只使用本機 stdio，不開任何遠端 listener。
+Codex provider 不讀取 `auth.json`、任務 JSONL、SQLite、cache 或登入 token。它以 `Process.executableURL` 直接執行使用者指定或驗證過的 `codex` 一般檔案，arguments 固定為 `app-server --listen stdio://`，不經 shell。協定依據是官方 [Codex App Server 文件](https://learn.chatgpt.com/docs/app-server)；本 App 只使用本機 stdio，不開任何遠端 listener。
 
-`CodexJSONRPCMethod` 與 `CodexJSONRPCNotificationMethod` 是封閉 enum，沒有任意 method 輸入介面。官方另有 `account/usage/read`，但那會讀取 token activity summary／daily buckets，與本 App 的即時量表目的及「不保存歷史」原則無關，因此沒有實作。App 只保留解析後的百分比、時間、Credits 狀態、plan 與 App Server user-agent；不記錄完整 response、reset credit ID 或子程序 stderr。stdout callback 先進入單一消費者的有界 FIFO，排隊 bytes 與每一條 JSONL 行（含未完成尾端）各自限制為 4 MB；任何一層超限都捨棄該精確連線。停用、換路徑與結束時只持有並終止自己建立的精確 `Process` instance。
+`CodexJSONRPCMethod` 與 `CodexJSONRPCNotificationMethod` 是封閉 enum，沒有任意 method 輸入介面。`account/usage/read` 只保留正規化後的累積量、最高單日量、日期與每日 Token；不讀取 `threadUsage`，也不從本機 task 補算 cache Token。App 不記錄完整 response、reset credit ID 或子程序 stderr。stdout callback 先進入單一消費者的有界 FIFO，排隊 bytes 與每一條 JSONL 行（含未完成尾端）各自限制為 4 MB；任何一層超限都捨棄該精確連線。停用、換路徑與結束時只持有並終止自己建立的精確 `Process` instance。
 
 ## 2. Claude：執行一個固定的唯讀指令
 
@@ -132,7 +132,7 @@ App 自己的節流參數仍然保留，理由從「避免被罰」變成「不�
 
 | 參數 | 值 | 理由 |
 |---|---|---|
-| 預設輪詢間隔 | 600 s | 每天約 144 次。0.3.1 從 1800 s 降下來 —— 舊值是為了避開由 App 自己控制重試才會踩到的懲罰迴圈。不再往下降的理由是**沒有回饋**：被限流時多半只會退回快取，不會報錯 |
+| 預設輪詢間隔 | 600 s | 每天約 144 次更新。0.3.1 從 1800 s 降下來 —— 舊值是為了避開由 App 自己控制重試才會踩到的懲罰迴圈。不再往下降的理由是**沒有回饋**：被限流時多半只會退回快取，不會報錯 |
 | 退避起點 | 60 s | |
 | **退避上限** | **1800 s** | 沿用舊值；現在只是本 App 對重複啟動 CLI 的保守上限，不再是「必須大於舊端點懲罰窗」的 shipping invariant |
 

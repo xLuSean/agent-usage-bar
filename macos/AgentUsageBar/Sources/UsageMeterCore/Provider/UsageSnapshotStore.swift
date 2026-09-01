@@ -8,8 +8,9 @@ import Foundation
 /// starts with what it had and only asks when that has aged out.
 ///
 /// What lands on disk is the normalized snapshot shown by the app: usage windows,
-/// timestamps, and provider-supplied account metadata such as plan or Credits. Raw
-/// provider output and credential material never pass through this type.
+/// timestamps, and provider-supplied account metadata such as plan, Credits, or Codex
+/// daily token totals. Raw provider output and credential material never pass through
+/// this type.
 public struct UsageSnapshotStore {
 
     private let defaults: UserDefaults
@@ -48,12 +49,15 @@ private extension UsageSnapshot {
     func isValidPersistedReading(for expectedProvider: ProviderKind, now: Date?) -> Bool {
         guard provider == expectedProvider,
               !windows.isEmpty,
+              provider == .codex || codexAccountUsage == nil,
+              codexAccountUsage.map(\.isValid) ?? true,
               hasSafeProviderMetadata else { return false }
 
         if let now {
             // A future wall-clock timestamp can survive a clock rollback or a damaged
             // defaults value. It is not evidence that the reading is fresh.
             guard fetchedAt <= now else { return false }
+            guard codexAccountUsage?.fetchedAt.map({ $0 <= now }) ?? true else { return false }
 
             // A persisted reading may have been fetched shortly before its quota window
             // rolled over. Freshness by fetch age alone would then restore an obsolete

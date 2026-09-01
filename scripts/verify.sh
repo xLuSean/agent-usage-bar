@@ -35,6 +35,8 @@ production_settings_fingerprint() {
       v1.provider.codex.enabled \
       v1.provider.codex.identityColor \
       v1.provider.codex.refreshInterval \
+      v1.codexTokenHistoryDays \
+      v1.codexTokenRefreshInterval \
       v1.menuBarLayout \
       v1.displayLanguage \
       v1.claudeExecutablePath \
