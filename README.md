@@ -1,5 +1,7 @@
 # Agent Usage Bar
 
+**繁體中文** | [English](README.en.md)
+
 macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面或輸入查詢指令，一眼看出訂閱額度用了多少。
 
 > [!WARNING]
