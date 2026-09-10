@@ -352,6 +352,31 @@ enum StatusBarSelfTest {
         controller.synchronize()
         check(controller.diagnostics.allSatisfy { $0.exists }, "Separate items return after switching back")
 
+        // The number badge changes image width. Prove real status items grow and
+        // shrink on updates, including a mixed combined image and quota reset.
+        for layout in [MenuBarLayout.separate, .combined] {
+            model.menuBarLayout = layout
+            claude.applyDemoScenario(.healthy)
+            codex.applyDemoScenario(.lowSession)
+            func checkImageLayout(_ widths: [CGFloat], _ description: String) {
+                let actual = controller.imageLayoutDiagnostics
+                check(actual.compactMap(\.imageSize?.width) == widths,
+                      "\(description): rendered widths match")
+                check(actual.allSatisfy { entry in
+                    guard let size = entry.imageSize else { return false }
+                    return size.height == 18 && entry.length == size.width + 8
+                }, "\(description): AppKit allocates the complete image plus padding")
+            }
+            checkImageLayout(layout == .separate ? [21, 24] : [46], "Mixed low-quota layout")
+            claude.applyDemoScenario(.lastPercent)
+            codex.applyDemoScenario(.exhausted)
+            checkImageLayout(layout == .separate ? [24, 24] : [51], "Both low, including 0% remaining")
+            check(codex.renderModel.lowRemainingPercent == 0, "Exhausted quota shows explicit 0% remaining")
+            claude.applyDemoScenario(.lowQuotaBoundary)
+            codex.applyDemoScenario(.lowQuotaBoundary)
+            checkImageLayout(layout == .separate ? [21, 21] : [41], "Recovery to 10% restores gauges")
+        }
+
         print(failures.isEmpty ? "\nselftest passed" : "\nselftest FAILED: \(failures.count) items")
         return failures.isEmpty ? 0 : 1
     }

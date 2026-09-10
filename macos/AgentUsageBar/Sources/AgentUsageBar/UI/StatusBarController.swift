@@ -83,6 +83,14 @@ final class StatusBarController: NSObject {
         }
     }
 
+    #if DEBUG
+    /// Read actual AppKit allocations after synthetic transitions, not predicted sizes.
+    var imageLayoutDiagnostics: [(length: CGFloat, imageSize: NSSize?)] {
+        let items = combinedItem.map { [$0] } ?? model.presenters.compactMap { providerItems[$0.provider] }
+        return items.map { (length: $0.length, imageSize: $0.button?.image?.size) }
+    }
+    #endif
+
     /// Where a provider's gauge actually is.
     ///
     /// macOS gives no callback for "your status item did not fit". When the menu bar is
@@ -359,8 +367,9 @@ final class StatusBarController: NSObject {
             let entries = model.enabledPresenters.map { presenter in
                 (model: presenter.renderModel(locale: model.displayLanguage.locale), identityColor: presenter.settings.identityColor.nsColor)
             }
-            combinedItem.length = GaugeImageRenderer.combinedWidth(count: max(1, entries.count))
-            button.image = GaugeImageRenderer.combinedImage(for: entries)
+            let image = GaugeImageRenderer.combinedImage(for: entries)
+            combinedItem.length = image.size.width + 8
+            button.image = image
             let separator = model.displayLanguage == .traditionalChinese ? "；" : "; "
             let label = entries.map(\.model.accessibilityLabel).joined(separator: separator)
             button.setAccessibilityLabel(label)
@@ -368,12 +377,14 @@ final class StatusBarController: NSObject {
         }
 
         for presenter in model.presenters {
-            guard let button = providerItems[presenter.provider]?.button else { continue }
+            guard let item = providerItems[presenter.provider], let button = item.button else { continue }
             let renderModel = presenter.renderModel(locale: model.displayLanguage.locale)
-            button.image = GaugeImageRenderer.image(
+            let image = GaugeImageRenderer.image(
                 for: renderModel,
                 identityColor: presenter.settings.identityColor.nsColor
             )
+            item.length = image.size.width + 8
+            button.image = image
             // Colour is never the only carrier: the glyph is in the image and the full
             // reading is in the accessibility label and the tooltip.
             button.setAccessibilityLabel(renderModel.accessibilityLabel)

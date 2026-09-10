@@ -67,8 +67,7 @@ public struct UsedPercent: Sendable, Hashable, Codable {
     /// Whole-percent used figure. The single rounding point in the pipeline.
     public var usedPercent: Int { Int(normalized.rounded()) }
 
-    /// `clamp(100 - percent, 0, 100)`. Kept because the plans define it, and because
-    /// some callers still want the complement — but it is no longer what the UI shows.
+    /// Complement of the rounded used figure, shown in the low-quota menu bar badge.
     public var remainingPercent: Int { max(0, min(100, 100 - usedPercent)) }
 
     /// 0…1 of consumption, for gauge fill height.

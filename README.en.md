@@ -41,7 +41,8 @@ Agent Usage Bar places a vertical liquid gauge in the menu bar. **The filled hei
 Both providers already report “percentage used.” Converting that value again would only add confusion, so the number and the gauge communicate the same thing.
 
 - The **outline color** identifies the provider and can be customized.
-- The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and 100% red with stripes) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
+- The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and a red slash at 100%) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
+- **Below 10% remaining**, a current reading switches to a colored outline containing the remaining number with `%` underneath, including `0%` when exhausted. Both separate and combined icons retain C/X and the provider color. The gauge returns at 10% or more; stale and rate-limited readings retain their existing state markers.
 - The **letter on the left** (`C` / `X`) is a second identity cue that does not depend on color, so the providers remain distinguishable for color-blind users or when similar outline colors are selected.
 
 When a provider **explicitly reports failure**, the app never presents old data as current. If a previous value exists, it is marked Stale with its fetch time; without trustworthy data, the app shows Unavailable. The design rule is that **unknown is never drawn as 0%**. The Codex decoder rejects out-of-range or non-integer percentages instead of clamping malformed input into a plausible-looking 0 or 100.

@@ -14,7 +14,7 @@ enum GaugeContactSheet {
     private static let rowHeight = GaugeImageRenderer.size.height * scale + 18
     private static let headerHeight: CGFloat = 36
     private static let labelWidth: CGFloat = 250
-    private static let cellWidth = GaugeImageRenderer.size.width * scale + 28
+    private static let cellWidth = GaugeImageRenderer.lowQuotaSize.width * scale + 28
 
     private struct Column {
         let provider: ProviderKind
@@ -46,7 +46,7 @@ enum GaugeContactSheet {
         let scenarios = DemoScenario.allCases
         let columns = self.columns
         let width = labelWidth + cellWidth * CGFloat(columns.count) + 16
-        let height = headerHeight + rowHeight * CGFloat(scenarios.count + 1) + 12
+        let height = headerHeight + rowHeight * CGFloat(scenarios.count + 2) + 12
 
         let image = NSImage(size: NSSize(width: width, height: height), flipped: true) { _ in
             NSColor.white.setFill()
@@ -68,7 +68,7 @@ enum GaugeContactSheet {
                 for (index, column) in columns.enumerated() {
                     var gauge = NSImage()
                     column.appearance.performAsCurrentDrawingAppearance {
-                        let model = GaugeStyleResolver.renderModel(provider: column.provider, state: scenario.state())
+                        let model = GaugeStyleResolver.renderModel(provider: column.provider, state: scenario.state(provider: column.provider))
                         gauge = GaugeImageRenderer.image(
                             for: model,
                             identityColor: SettingsStore.defaultColor(for: column.provider).nsColor
@@ -77,8 +77,8 @@ enum GaugeContactSheet {
                     draw(
                         gauge,
                         size: NSSize(
-                            width: GaugeImageRenderer.size.width * scale,
-                            height: GaugeImageRenderer.size.height * scale
+                            width: gauge.size.width * scale,
+                            height: gauge.size.height * scale
                         ),
                         x: labelWidth + cellWidth * CGFloat(index) + 14,
                         rowTop: rowTop,
@@ -99,7 +99,7 @@ enum GaugeContactSheet {
                         (
                             model: GaugeStyleResolver.renderModel(
                                 provider: provider,
-                                state: provider == .claude ? DemoScenario.healthy.state() : DemoScenario.notLoggedIn.state()
+                                state: (provider == .claude ? DemoScenario.healthy : DemoScenario.lowSession).state(provider: provider)
                             ),
                             identityColor: SettingsStore.defaultColor(for: provider).nsColor
                         )
@@ -141,6 +141,49 @@ enum GaugeContactSheet {
             throw CocoaError(.fileWriteUnknown)
         }
         try png.write(to: URL(fileURLWithPath: path))
+        let previewURL = URL(fileURLWithPath: path).deletingPathExtension().appendingPathExtension("low-quota.png")
+        try writeLowQuotaPreview(to: previewURL)
+    }
+
+    /// A compact, synthetic-only view of the production renderer at 1x and 2.5x.
+    private static func writeLowQuotaPreview(to url: URL) throws {
+        let image = NSImage(size: NSSize(width: 640, height: 230), flipped: true) { _ in
+            NSColor.white.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 640, height: 230)).fill()
+            drawText("Synthetic data · production renderer · 1x / 2.5x", at: NSPoint(x: 16, y: 10), color: .black)
+            for (index, title) in ["9% remaining", "0% remaining", "Combined: 9% + 1%"].enumerated() {
+                drawText(title, at: NSPoint(x: 16 + CGFloat(index) * 208, y: 34), bold: true, color: .black)
+            }
+            for (dark, rowTop) in [(false, CGFloat(56)), (true, CGFloat(142))] {
+                let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
+                (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.97, alpha: 1)).setFill()
+                NSBezierPath(rect: NSRect(x: 8, y: rowTop, width: 624, height: 82)).fill()
+                appearance.performAsCurrentDrawingAppearance {
+                    func entry(_ provider: ProviderKind, _ scenario: DemoScenario) -> (model: GaugeRenderModel, identityColor: NSColor) {
+                        (GaugeStyleResolver.renderModel(provider: provider, state: scenario.state(provider: provider)),
+                         SettingsStore.defaultColor(for: provider).nsColor)
+                    }
+                    let codex = entry(.codex, .lowSession)
+                    let exhausted = entry(.claude, .exhausted)
+                    let images = [
+                        GaugeImageRenderer.image(for: codex.model, identityColor: codex.identityColor),
+                        GaugeImageRenderer.image(for: exhausted.model, identityColor: exhausted.identityColor),
+                        GaugeImageRenderer.combinedImage(for: [entry(.claude, .lowSession), entry(.codex, .lastPercent)]),
+                    ]
+                    for (index, badge) in images.enumerated() {
+                        let x = 16 + CGFloat(index) * 208
+                        draw(badge, size: badge.size, x: x, rowTop: rowTop - 4, appearance: appearance)
+                        draw(badge, size: NSSize(width: badge.size.width * 2.5, height: badge.size.height * 2.5),
+                             x: x + 68, rowTop: rowTop - 4, appearance: appearance)
+                    }
+                }
+            }
+            return true
+        }
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { throw CocoaError(.fileWriteUnknown) }
+        try png.write(to: url)
     }
 
     /// The sheet's context is flipped for text layout; the gauges are not, so each one

@@ -90,6 +90,39 @@ struct GaugeStyleTests {
         #expect(model.fillFraction == 0.29)
     }
 
+    @Test("低額度徽章顯示剩餘整數，10% 邊界與四捨五入一致")
+    func lowRemainingPercentBoundaries() {
+        let cases: [(Double, Int?)] = [
+            (0, nil), (89, nil), (90, nil), (90.49, nil), (90.5, 9),
+            (91, 9), (92, 8), (99, 1), (99.5, 0), (100, 0),
+        ]
+        for provider in ProviderKind.allCases {
+            for (used, expected) in cases {
+                let model = GaugeStyleResolver.renderModel(
+                    provider: provider, state: .current(snapshot(window(used: used)))
+                )
+                #expect(model.lowRemainingPercent == expected)
+            }
+        }
+    }
+
+    @Test("低額度更新沿用數字，過期、限流與未知仍保留狀態圖示")
+    func lowQuotaDoesNotHideDataState() {
+        let base = snapshot(window(used: 91))
+        let refreshing = GaugeStyleResolver.renderModel(provider: .claude, state: .refreshing(previous: base))
+        #expect(refreshing.lowRemainingPercent == 9)
+        let states: [UsageDisplayState] = [
+            .starting, .refreshing(previous: nil), .unavailable(.offline),
+            .stale(base, reason: .offline),
+            .throttled(previous: base, until: base.fetchedAt.addingTimeInterval(60)),
+            .throttled(previous: nil, until: base.fetchedAt.addingTimeInterval(60)),
+            .current(UsageSnapshot(provider: .claude, sourcePath: .fixture, windows: [], fetchedAt: base.fetchedAt)),
+        ]
+        for state in states {
+            #expect(GaugeStyleResolver.renderModel(provider: .claude, state: state).lowRemainingPercent == nil)
+        }
+    }
+
     @Test("VoiceOver 標籤在每種狀態下都說得出發生什麼事")
     func accessibilityLabels() {
         let base = snapshot(window(used: 93))
@@ -100,6 +133,11 @@ struct GaugeStyleTests {
         #expect(current.contains("93%"))
         #expect(current.contains("used"))
         #expect(current.contains("Claude"))
+        #expect(current.contains("7% remaining"))
+        let currentChinese = GaugeStyleResolver.accessibilityLabel(
+            provider: .claude, state: .current(base), locale: Locale(identifier: "zh_Hant_TW")
+        )
+        #expect(currentChinese.contains("剩餘約 7%"))
 
         let unavailable = GaugeStyleResolver.accessibilityLabel(
             provider: .claude, state: .unavailable(.claudeNotSignedIn), locale: english
@@ -149,6 +187,7 @@ struct RepresentativeWindowTests {
         ])
         #expect(snap.representativeWindow?.kind == .session)
         #expect(snap.representativeWindow?.used.usedPercent == 30)
+        #expect(GaugeStyleResolver.renderModel(provider: .claude, state: .current(snap)).lowRemainingPercent == nil)
     }
 
     @Test("沒有 5 小時窗時退回綁定的那個")

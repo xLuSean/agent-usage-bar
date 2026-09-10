@@ -10,6 +10,8 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
     case betweenWindows
     case refreshing
     case lowSession
+    case lowQuotaBoundary
+    case lastPercent
     case exhausted
     case stale
     case throttled
@@ -25,7 +27,9 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
         case .healthy: "Healthy (5h 29% used)"
         case .betweenWindows: "Between Claude usage windows (0%, no reset)"
         case .refreshing: "Refreshing (showing previous data)"
-        case .lowSession: "5h nearly exhausted (92% used)"
+        case .lowSession: "5h nearly exhausted (9% remaining)"
+        case .lowQuotaBoundary: "Badge boundary (10% remaining)"
+        case .lastPercent: "Last percent (1% remaining)"
         case .exhausted: "Exhausted (100%)"
         case .stale: "Stale (offline)"
         case .throttled: "Rate limited (429)"
@@ -51,7 +55,11 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                 provider: provider
             ))
         case .lowSession:
-            return .current(Self.snapshot(sessionUsed: 92, weeklyUsed: 74, now: now, provider: provider))
+            return .current(Self.snapshot(sessionUsed: 91, weeklyUsed: 74, now: now, provider: provider))
+        case .lowQuotaBoundary:
+            return .current(Self.snapshot(sessionUsed: 90, weeklyUsed: 74, now: now, provider: provider))
+        case .lastPercent:
+            return .current(Self.snapshot(sessionUsed: 99, weeklyUsed: 74, now: now, provider: provider))
         case .exhausted:
             return .current(Self.snapshot(sessionUsed: 100, weeklyUsed: 91, now: now, provider: provider))
         case .stale:

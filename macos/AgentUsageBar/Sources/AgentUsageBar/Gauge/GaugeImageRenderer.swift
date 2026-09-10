@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import UsageMeterCore
 
 /// Draws the menu bar gauge.
@@ -15,6 +16,11 @@ import UsageMeterCore
 enum GaugeImageRenderer {
 
     static let size = NSSize(width: 21, height: 18)
+    static let lowQuotaSize = NSSize(width: 24, height: 18)
+
+    static func imageSize(for model: GaugeRenderModel) -> NSSize {
+        model.lowRemainingPercent == nil ? size : lowQuotaSize
+    }
 
     private static let glyphWidth: CGFloat = 7.5
     private static let frameStroke: CGFloat = 1.5
@@ -23,7 +29,7 @@ enum GaugeImageRenderer {
     private static let minimumVisibleFill: CGFloat = 2.0
 
     static func image(for model: GaugeRenderModel, identityColor: NSColor) -> NSImage {
-        let image = NSImage(size: size, flipped: false) { _ in
+        let image = NSImage(size: imageSize(for: model), flipped: false) { _ in
             draw(model: model, identityColor: identityColor)
             return true
         }
@@ -38,6 +44,11 @@ enum GaugeImageRenderer {
         let outlineColor = dimmed ? identityColor.withAlphaComponent(0.55) : identityColor
 
         drawGlyph(model.glyph, color: outlineColor)
+
+        if let remaining = model.lowRemainingPercent {
+            drawRemainingBadge(remaining, identityColor: outlineColor)
+            return
+        }
 
         let frameRect = NSRect(
             x: glyphWidth + 1.5,
@@ -75,6 +86,40 @@ enum GaugeImageRenderer {
         if model.frameStyle == .staleMarked {
             drawStaleMark(near: frameRect)
         }
+    }
+
+    /// Keep the approved badge at full width even in a combined status item. Ink
+    /// bounds position the two lines independently of the font's line-height padding.
+    private static func drawRemainingBadge(_ remaining: Int, identityColor: NSColor) {
+        let frame = NSBezierPath(
+            roundedRect: NSRect(x: 9.5, y: 0.5, width: 13, height: 17),
+            xRadius: 3, yRadius: 3
+        )
+        frame.lineWidth = 1
+        identityColor.setStroke()
+        frame.stroke()
+
+        drawBadgeText(String(remaining), fontSize: 11, inkTop: 16)
+        drawBadgeText("%", fontSize: 7, inkBottom: 2)
+    }
+
+    private static func drawBadgeText(
+        _ value: String, fontSize: CGFloat, inkTop: CGFloat? = nil, inkBottom: CGFloat = 0
+    ) {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: value, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold),
+            .foregroundColor: NSColor.labelColor,
+        ]))
+        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(
+            x: 16 - ink.midX,
+            y: inkTop.map { $0 - ink.maxY } ?? (inkBottom - ink.minY)
+        )
+        CTLineDraw(line, context)
     }
 
     private static func drawGlyph(_ glyph: String, color: NSColor) {
@@ -225,18 +270,21 @@ extension GaugeImageRenderer {
         guard !models.isEmpty else { return neutralAppIcon() }
 
         let spacing: CGFloat = 3
-        let unitWidth = size.width - 2      // slightly tighter than standalone
-        let totalWidth = unitWidth * CGFloat(models.count) + spacing * CGFloat(models.count - 1)
+        let widths = models.map { entry in
+            entry.model.lowRemainingPercent == nil ? size.width - 2 : lowQuotaSize.width
+        }
+        let totalWidth = widths.reduce(0, +) + spacing * CGFloat(models.count - 1)
 
         let image = NSImage(size: NSSize(width: totalWidth, height: size.height), flipped: false) { _ in
+            var x: CGFloat = 0
             for (index, entry) in models.enumerated() {
-                let x = (unitWidth + spacing) * CGFloat(index)
                 NSGraphicsContext.saveGraphicsState()
                 let transform = NSAffineTransform()
                 transform.translateX(by: x, yBy: 0)
                 transform.concat()
-                draw(model: entry.model, identityColor: entry.identityColor, width: unitWidth)
+                draw(model: entry.model, identityColor: entry.identityColor, width: widths[index])
                 NSGraphicsContext.restoreGraphicsState()
+                x += widths[index] + spacing
             }
             return true
         }

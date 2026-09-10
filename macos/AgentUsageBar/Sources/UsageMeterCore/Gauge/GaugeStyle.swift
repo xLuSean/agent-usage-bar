@@ -47,6 +47,16 @@ public struct GaugeRenderModel: Sendable, Hashable {
     public let glyph: String
     public let accessibilityLabel: String
 
+    /// Switch only a current reading to the compact remaining-quota badge. Keep
+    /// stale, throttled and unknown artwork intact so quantity cannot hide state.
+    /// Match UsedPercent's whole-percent display boundary, including 0% remaining.
+    public var lowRemainingPercent: Int? {
+        guard frameStyle == .solid, fillLevel != .unknown,
+              fillFraction.isFinite, (0...1).contains(fillFraction) else { return nil }
+        let remaining = 100 - Int((fillFraction * 100).rounded())
+        return remaining < 10 ? remaining : nil
+    }
+
     public init(
         provider: ProviderKind,
         fillLevel: GaugeFillLevel,
@@ -156,7 +166,7 @@ public enum GaugeStyleResolver {
                     ?? state.statusLabel(locale: locale)
                 return "\(name) 額度未知，\(reason)"
             }
-            let usage = "\(name) \(window.displayName(locale: locale))額度已用約 \(window.used.usedPercent)%"
+            let usage = "\(name) \(window.displayName(locale: locale))額度已用約 \(window.used.usedPercent)%，剩餘約 \(window.used.remainingPercent)%"
             switch state {
             case .current:
                 return "\(usage)，資料為最新"
@@ -177,7 +187,7 @@ public enum GaugeStyleResolver {
             let reason = state.error?.shortDescription(locale: locale) ?? state.statusLabel(locale: locale)
             return "\(name) usage unknown: \(reason)"
         }
-        let usage = "\(name), \(window.displayName(locale: locale)), approximately \(window.used.usedPercent)% used"
+        let usage = "\(name), \(window.displayName(locale: locale)), approximately \(window.used.usedPercent)% used, \(window.used.remainingPercent)% remaining"
         switch state {
         case .current:
             return "\(usage), data is current"
