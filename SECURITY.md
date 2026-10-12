@@ -68,7 +68,10 @@ The following properties must remain true:
 - Every Claude and Codex subprocess runs from a new empty, local, non-symlink,
   mode-0700 temporary directory with matching `PWD`. Failure to create or
   validate that directory must fail the query; it must never fall back to `/`,
-  the user's home directory, an app location, or a user project.
+  the user's home directory, an app location, or a user project. The Claude
+  subprocess also points Claude Code's own scratch root (`CLAUDE_CODE_TMPDIR`)
+  at that directory, so the per-run folders the CLI leaves behind are removed
+  with it instead of accumulating in a location the app does not own.
 - Raw credentials and raw provider responses are not stored as diagnostics or
   test fixtures. The optional local error history stores only an app-generated
   timestamp, provider enum, and closed app-authored error category. It must not
@@ -161,7 +164,7 @@ themselves:
   subprocess termination, and provider-error sanitization have deterministic
   regression tests. Subprocess tests also read back the real cwd and `PWD`,
   require an empty local directory, reject `/`, and verify cleanup after exact
-  child exit. Fixture cleanup uses a unique stop capability and never signals a
+  child exit, including folders the child created inside it. Fixture cleanup uses a unique stop capability and never signals a
   PID read from a file. See
   [docs/VERIFICATION.md](docs/VERIFICATION.md).
 - Packaging requires a clean committed version, signs and verifies the App,

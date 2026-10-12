@@ -217,7 +217,7 @@ struct UsageSnapshotStoreTests {
             "result": result,
         ]
         let data = try JSONSerialization.data(withJSONObject: envelope)
-        return try ClaudeUsageTextDecoder.decode(
+        return try ClaudeUsageDecoder.decode(
             data,
             now: Date(timeIntervalSince1970: 1_787_576_400),
             timeZone: TimeZone(identifier: "Asia/Taipei")!

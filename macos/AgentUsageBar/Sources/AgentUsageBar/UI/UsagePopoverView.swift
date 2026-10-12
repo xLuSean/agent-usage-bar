@@ -22,6 +22,12 @@ struct UsagePopoverView: View {
     /// The controller measures the unscrolled view first. Scrolling is enabled only
     /// when the natural height is taller than the current screen can display.
     let allowsScrolling: Bool
+    /// Which rows are folded to one line. Shared, so the rows folded here are the rows
+    /// every popover shows folded.
+    let disclosure: WindowDisclosureModel
+    /// Called after a row is folded or unfolded. The popover's height was fixed from
+    /// the content when it opened, and the content has just changed height.
+    let onContentHeightChange: () -> Void
 
     init(
         presenters: [ProviderPresenter],
@@ -29,6 +35,8 @@ struct UsagePopoverView: View {
         codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
         now: Date = Date(),
         allowsScrolling: Bool = true,
+        disclosure: WindowDisclosureModel = WindowDisclosureModel(),
+        onContentHeightChange: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void
     ) {
         self.presenters = presenters
@@ -36,6 +44,8 @@ struct UsagePopoverView: View {
         self.codexTokenHistoryPeriod = codexTokenHistoryPeriod
         self.now = now
         self.allowsScrolling = allowsScrolling
+        self.disclosure = disclosure
+        self.onContentHeightChange = onContentHeightChange
         self.onOpenSettings = onOpenSettings
     }
 
@@ -45,6 +55,8 @@ struct UsagePopoverView: View {
         codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
         now: Date = Date(),
         allowsScrolling: Bool = true,
+        disclosure: WindowDisclosureModel = WindowDisclosureModel(),
+        onContentHeightChange: @escaping () -> Void = {},
         onOpenSettings: @escaping () -> Void
     ) {
         self.init(
@@ -53,6 +65,8 @@ struct UsagePopoverView: View {
             codexTokenHistoryPeriod: codexTokenHistoryPeriod,
             now: now,
             allowsScrolling: allowsScrolling,
+            disclosure: disclosure,
+            onContentHeightChange: onContentHeightChange,
             onOpenSettings: onOpenSettings
         )
     }
@@ -86,7 +100,9 @@ struct UsagePopoverView: View {
                     presenter: presenter,
                     language: language,
                     codexTokenHistoryPeriod: codexTokenHistoryPeriod,
-                    now: now
+                    now: now,
+                    disclosure: disclosure,
+                    onContentHeightChange: onContentHeightChange
                 )
             }
         }
@@ -117,6 +133,8 @@ private struct ProviderSection: View {
     let language: AppLanguage
     let codexTokenHistoryPeriod: CodexTokenHistoryPeriod
     let now: Date
+    let disclosure: WindowDisclosureModel
+    let onContentHeightChange: () -> Void
     @State private var didCopyLoginCommand = false
 
     private func credentialRecoveryAction(command: String) -> some View {
@@ -280,7 +298,12 @@ private struct ProviderSection: View {
                         window: window,
                         isTrustworthy: presenter.state.isDataTrustworthyAsCurrent,
                         language: language,
-                        missingReset: missingResetPresentation(for: window)
+                        missingReset: missingResetPresentation(for: window),
+                        isCollapsed: disclosure.isCollapsed(window, provider: presenter.provider),
+                        onToggle: {
+                            disclosure.toggle(window, provider: presenter.provider)
+                            onContentHeightChange()
+                        }
                     )
                 }
             }
@@ -567,51 +590,90 @@ private struct StatusPill: View {
     }
 }
 
+/// One usage window. Its heading folds it to a single line and back.
+///
+/// Folded, the row keeps its name, its percentage, and the binding badge; only the bar
+/// and the reset line go. The figure is never hidden, which is why a folded row needs
+/// no rule to unfold itself when it gets urgent.
 private struct WindowRow: View {
     let window: UsageWindow
     let isTrustworthy: Bool
     let language: AppLanguage
     let missingReset: MissingResetPresentation
+    let isCollapsed: Bool
+    let onToggle: () -> Void
+
+    private var name: String { window.displayName(locale: language.locale) }
+
+    private var usedText: String {
+        language.text(
+            chinese: "已用 \(window.used.usedPercent)%",
+            english: "\(window.used.usedPercent)% used"
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack {
-                Text(verbatim: window.displayName(locale: language.locale)).font(.callout).bold()
-                if window.isActive {
-                    Text("Currently binding")
-                        .font(.caption2)
-                        .padding(.horizontal, 5).padding(.vertical, 1)
-                        .background(.quaternary, in: Capsule())
+            Button(action: onToggle) {
+                HStack {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 10)
+                        .accessibilityHidden(true)
+                    Text(verbatim: name).font(.callout).bold()
+                    if window.isActive {
+                        Text("Currently binding")
+                            .font(.caption2)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(.quaternary, in: Capsule())
+                    }
+                    Spacer()
+                    Text(verbatim: usedText)
+                        .font(.callout)
+                        .monospacedDigit()
+                        .foregroundStyle(isTrustworthy ? .primary : .secondary)
                 }
-                Spacer()
-                Text(language.text(
-                    chinese: "已用 \(window.used.usedPercent)%",
-                    english: "\(window.used.usedPercent)% used"
-                ))
-                    .font(.callout)
-                    .monospacedDigit()
-                    .foregroundStyle(isTrustworthy ? .primary : .secondary)
+                // The whole heading is the target, including the gap between the name
+                // and the figure.
+                .contentShape(Rectangle())
             }
-            ProgressView(value: window.used.usedFraction)
-                .tint(Color(GaugeStyleResolver.fillLevel(for: window).fillColor))
-            HStack {
-                Text(language.text(
-                    chinese: "剩 \(window.used.remainingPercent)%",
-                    english: "\(window.used.remainingPercent)% remaining"
-                ))
-                Spacer()
-                if let resetsAt = window.resetsAt {
+            .buttonStyle(.plain)
+            .accessibilityValue(language.text(
+                chinese: isCollapsed ? "已收合" : "已展開",
+                english: isCollapsed ? "Collapsed" : "Expanded"
+            ))
+            .accessibilityHint(language.text(
+                chinese: isCollapsed ? "展開以顯示進度條與重設時間" : "收合成一行",
+                english: isCollapsed ? "Expands to show the bar and reset time" : "Collapses to one line"
+            ))
+            .help(language.text(
+                chinese: isCollapsed ? "展開「\(name)」" : "收合「\(name)」",
+                english: isCollapsed ? "Expand \(name)" : "Collapse \(name)"
+            ))
+
+            if !isCollapsed {
+                ProgressView(value: window.used.usedFraction)
+                    .tint(Color(GaugeStyleResolver.fillLevel(for: window).fillColor))
+                HStack {
                     Text(language.text(
-                        chinese: "重設於 \(TimeFormatting.resetDescription(resetsAt, locale: language.locale))",
-                        english: "Resets \(TimeFormatting.resetDescription(resetsAt, locale: language.locale))"
+                        chinese: "剩 \(window.used.remainingPercent)%",
+                        english: "\(window.used.remainingPercent)% remaining"
                     ))
-                } else {
-                    Text(verbatim: missingReset.text)
-                        .help(missingReset.help ?? missingReset.text)
+                    Spacer()
+                    if let resetsAt = window.resetsAt {
+                        Text(language.text(
+                            chinese: "重設於 \(TimeFormatting.resetDescription(resetsAt, locale: language.locale))",
+                            english: "Resets \(TimeFormatting.resetDescription(resetsAt, locale: language.locale))"
+                        ))
+                    } else {
+                        Text(verbatim: missingReset.text)
+                            .help(missingReset.help ?? missingReset.text)
+                    }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
     }
 }

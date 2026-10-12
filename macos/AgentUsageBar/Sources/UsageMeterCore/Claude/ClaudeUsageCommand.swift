@@ -31,11 +31,18 @@ public enum ClaudeUsageCommand {
     ///   the run while still using the existing sign-in.
     /// - `--no-session-persistence` stops the one-shot invocation leaving a session
     ///   behind. The response still carries a `session_id`; it is never stored.
+    /// - `--verbose` changes what is printed, not what is run. Without it the single
+    ///   JSON document is only the final result message; with it the document is an
+    ///   array of every message of the run, and the one that delivers `/usage` carries
+    ///   the structured `usage_report` that `ClaudeUsageDecoder` reads in preference to
+    ///   the prose. Verified 2026-10-11 against Claude Code 2.1.287: still
+    ///   `num_turns=0`, every token count `0`, `total_cost_usd=0`.
     public static let arguments = [
         "--safe-mode",
         "--no-session-persistence",
         "-p", "/usage",
         "--output-format", "json",
+        "--verbose",
     ]
 
     /// Generous: observed warm invocations finish well below one second, but a cold
@@ -48,7 +55,8 @@ public enum ClaudeUsageCommand {
     /// signal or a descendant keeps an inherited output pipe open.
     static let terminationGrace: TimeInterval = 1
 
-    /// `/usage` output ran ~1.5 KB in practice. The cap exists so a CLI that decides to
+    /// `/usage` output ran ~9 KB in practice with `--verbose`, most of it the opening
+    /// message that lists the session's tools. The cap exists so a CLI that decides to
     /// stream something unexpected cannot grow the app's memory without bound.
     public static let maxOutputBytes = 512 * 1024
 
@@ -232,6 +240,23 @@ public struct ClaudeProcessRunner: ClaudeCommandRunning {
     /// So the pin stays: two lines that cost nothing and would help if the CLI ever does
     /// honour them. What actually protects the reading is the parser, which fails closed
     /// on text it does not recognise rather than trusting the environment.
+    ///
+    /// # Why the CLI's own temp root moves into the working directory
+    ///
+    /// Claude Code keeps per-invocation scratch folders under its own temp root
+    /// (`/tmp/claude-<uid>/` on macOS), in a folder named after the working directory.
+    /// Every query here gets a fresh working directory, so every query left one more
+    /// empty folder behind in a place this app does not own and must not clean.
+    /// Measured 2026-10-11 against Claude Code 2.1.287 from an otherwise clean
+    /// environment: one new folder per query without the override, none with it.
+    ///
+    /// `CLAUDE_CODE_TMPDIR` is the documented override. The CLI appends its own
+    /// `claude-<uid>/`, so nothing is created until the child runs and the directory is
+    /// still empty at launch. `run` already removes that directory once the child is
+    /// gone, which now takes the CLI's scratch folders with it.
+    ///
+    /// Only the scratch root moves. `HOME` and `TMPDIR` are untouched, so the CLI still
+    /// finds its own sign-in and configuration.
     static func childEnvironment(
         base: [String: String] = ProcessInfo.processInfo.environment,
         workingDirectory: ProviderProcessWorkingDirectory? = nil
@@ -239,7 +264,9 @@ public struct ClaudeProcessRunner: ClaudeCommandRunning {
         var environment = base
         environment["LANG"] = "en_US.UTF-8"
         environment["LC_ALL"] = "en_US.UTF-8"
-        return workingDirectory?.environment(basedOn: environment) ?? environment
+        guard let workingDirectory else { return environment }
+        environment["CLAUDE_CODE_TMPDIR"] = workingDirectory.url.path
+        return workingDirectory.environment(basedOn: environment)
     }
 }
 

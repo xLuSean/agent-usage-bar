@@ -61,6 +61,7 @@ struct ClaudeProviderTests {
 
         #expect(runner.arguments == [
             "--safe-mode", "--no-session-persistence", "-p", "/usage", "--output-format", "json",
+            "--verbose",
         ])
         #expect(runner.arguments == ClaudeUsageCommand.arguments)
         #expect(runner.timeout == ClaudeUsageCommand.timeout)
@@ -77,6 +78,40 @@ struct ClaudeProviderTests {
             #expect(!forbidden.contains(argument), "\(argument) must not be part of the usage query")
         }
         #expect(ClaudeUsageCommand.arguments.contains("/usage"))
+    }
+
+    /// The whole path on the shape the fixed command actually prints: the array, with
+    /// the report attached. The prose in the same output would read 88%.
+    @Test func decodesTheReportFromAVerboseRun() async throws {
+        let stdout = ClaudeUsageReportDecoderTests.output(
+            report: ClaudeUsageReportDecoderTests.report(limits: [
+                ClaudeUsageReportDecoderTests.session,
+                ClaudeUsageReportDecoderTests.weekly,
+                ClaudeUsageReportDecoderTests.scoped,
+            ])
+        )
+        let runner = RecordingRunner(result: .success(ClaudeCommandOutput(exitCode: 0, standardOutput: stdout)))
+        let provider = ClaudeUsageProvider(locator: Self.locator(), runner: runner, now: { Self.now })
+
+        let snapshot = try await provider.fetch()
+
+        #expect(snapshot.representativeWindow?.used.usedPercent == 42)
+        #expect(snapshot.windows.map(\.kind) == [.session, .weeklyAll, .weeklyScoped])
+        #expect(snapshot.windows.first { $0.kind == .weeklyAll }?.isActive == true)
+    }
+
+    /// The lookup failed inside Claude Code. The run itself succeeded and the prose
+    /// still prints figures, which is exactly why this must surface as a failure.
+    @Test func surfacesAReportWithNoRowsAsAFailure() async {
+        let stdout = ClaudeUsageReportDecoderTests.output(
+            report: ClaudeUsageReportDecoderTests.report(limits: NSNull())
+        )
+        let runner = RecordingRunner(result: .success(ClaudeCommandOutput(exitCode: 0, standardOutput: stdout)))
+        let provider = ClaudeUsageProvider(locator: Self.locator(), runner: runner, now: { Self.now })
+
+        await #expect(throws: UsageError.claudeUsageUnavailable) {
+            try await provider.fetch()
+        }
     }
 
     @Test func decodesASuccessfulRun() async throws {
@@ -172,6 +207,34 @@ struct ClaudeProviderTests {
         }
     }
 
+    /// With `--verbose` the outcome is the last message of an array whose first message
+    /// lists the run's tools and commands. The diagnosis has to come from the outcome.
+    @Test func classifiesASignedOutCLIFromTheVerboseArray() {
+        let stdout = ClaudeUsageReportDecoderTests.output(
+            report: nil,
+            result: "Not logged in · Please run /login",
+            isError: true
+        )
+        // Far enough in that a prefix of the raw output would never reach it.
+        #expect(stdout.count > 0)
+        let output = ClaudeCommandOutput(exitCode: 1, standardOutput: stdout)
+        #expect(ClaudeUsageProvider.classify(output: output) == .claudeNotSignedIn)
+    }
+
+    /// The opening message of the synthetic array names a tool called
+    /// "authentication-helper" and one containing "unknown option". Neither is the CLI
+    /// saying anything about this run, so neither may decide the diagnosis.
+    @Test func ignoresTheOpeningMessageWhenClassifying() {
+        let stdout = ClaudeUsageReportDecoderTests.output(report: nil, result: "boom", isError: true)
+        let output = ClaudeCommandOutput(exitCode: 7, standardOutput: stdout)
+        guard case .claudeCommandFailed(let detail) = ClaudeUsageProvider.classify(output: output) else {
+            Issue.record("Expected claudeCommandFailed")
+            return
+        }
+        #expect(detail.contains("7"))
+        #expect(!detail.contains("boom"))
+    }
+
     @Test func fallsBackToAGenericFailure() {
         let output = ClaudeCommandOutput(exitCode: 9, standardOutput: Data(), standardErrorPrefix: "boom")
         guard case .claudeCommandFailed(let detail) = ClaudeUsageProvider.classify(output: output) else {
@@ -229,6 +292,26 @@ struct ClaudeProviderTests {
         // Stripping the environment would leave the CLI unable to find its runtime or
         // its own configuration.
         #expect(environment["HOME"] == "/Users/example")
+    }
+
+    /// Claude Code names a scratch folder after the working directory, and each query
+    /// has a new one. Left at the CLI's default temp root, one folder per query stays
+    /// behind; inside the query's own directory they are removed with it.
+    @Test func keepsTheCLIScratchRootInsideTheQueryDirectory() throws {
+        let workingDirectory = try ProviderProcessWorkingDirectory.create(for: .claude)
+        defer { workingDirectory.remove() }
+
+        let environment = ClaudeProcessRunner.childEnvironment(
+            base: ["HOME": "/Users/example", "CLAUDE_CODE_TMPDIR": "/tmp/elsewhere"],
+            workingDirectory: workingDirectory
+        )
+
+        #expect(environment["CLAUDE_CODE_TMPDIR"] == workingDirectory.url.path)
+        #expect(environment["PWD"] == workingDirectory.url.path)
+        // Only the scratch root moves. The CLI's sign-in and configuration live under
+        // `HOME`, and the system temp directory is not this app's to redirect.
+        #expect(environment["HOME"] == "/Users/example")
+        #expect(environment["TMPDIR"] == nil)
     }
 
     // MARK: - Stored snapshots from earlier versions

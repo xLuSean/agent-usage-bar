@@ -1,25 +1,27 @@
 import Foundation
 
-/// Decodes `claude -p "/usage" --output-format json`.
+/// Reads the two usage figures out of the prose `/usage` prints.
 ///
-/// # Two layers, and only one of them is a contract
+/// # When this runs
 ///
-/// The outer envelope is real JSON with stable keys (`is_error`, `subtype`, `result`).
-/// The figures this app needs are *inside* `result`, as English prose written for a
-/// person to read. There is no field schema for them.
+/// It is the fallback. `ClaudeUsageDecoder` prefers the structured `usage_report` and
+/// comes here only when the CLI did not attach one (an older build, or a sign-in the
+/// report is not offered for), or attached one without the two meters this app needs.
 ///
-/// So everything here fails closed. A line that does not match exactly is a schema
-/// change, not an invitation to guess: no `0%`, no partial reading, no reuse of a
-/// previous value. Showing "unknown" costs the user one glance; showing a wrong number
-/// costs them the decision they made because of it.
+/// # Why everything here fails closed
+///
+/// The figures are English prose written for a person to read. There is no field
+/// schema for them, so a line that does not match exactly is a schema change, not an
+/// invitation to guess: no `0%`, no partial reading, no reuse of a previous value.
+/// Showing "unknown" costs the user one glance; showing a wrong number costs them the
+/// decision they made because of it.
 ///
 /// # What is deliberately thrown away
 ///
-/// `result` also carries a local-activity breakdown — request counts, session counts,
+/// The text also carries a local-activity breakdown — request counts, session counts,
 /// which skills and MCP servers were used, and what share each accounted for. None of
 /// it is needed here and all of it is the user's private working history. It is never
-/// parsed, never stored, never shown, and never quoted in an error. The same goes for
-/// the envelope's one-shot `session_id`.
+/// parsed, never stored, never shown, and never quoted in an error.
 public enum ClaudeUsageTextDecoder {
 
     /// Absorbs clock skew and the one-second gap between the endpoint's real boundary
@@ -27,28 +29,12 @@ public enum ClaudeUsageTextDecoder {
     /// rolled-over window is still caught within a minute.
     static let resetGrace: TimeInterval = 60
 
-    public static func decode(
-        _ data: Data,
-        now: Date,
-        sourceVersion: String? = nil,
-        timeZone: TimeZone = .current
-    ) throws -> UsageSnapshot {
-        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw UsageError.schemaChanged("Command output is not a JSON object")
-        }
-
-        // `is_error` absent is treated as an error rather than as success: a missing
-        // success signal is not the same thing as a success signal.
-        guard root["is_error"] as? Bool == false else {
-            throw UsageError.claudeCommandFailed("The CLI reported is_error for /usage")
-        }
-        guard let subtype = root["subtype"] as? String, subtype == "success" else {
-            throw UsageError.claudeCommandFailed("The CLI did not report subtype=success for /usage")
-        }
-        guard let result = root["result"] as? String, !result.isEmpty else {
-            throw UsageError.schemaChanged("Missing result text")
-        }
-
+    /// The session and all-models weekly windows, in that order. Both are required.
+    static func windows(
+        in result: String,
+        timeZone: TimeZone,
+        now: Date
+    ) throws -> [UsageWindow] {
         let session = try window(
             in: result,
             matching: Line.session,
@@ -72,36 +58,7 @@ public enum ClaudeUsageTextDecoder {
             timeZone: timeZone,
             now: now
         )
-
-        // The staleness guard. `/usage` can answer from Claude Code's local cache when
-        // it cannot reach the server, and the text carries no as-of time — so a stale
-        // reading is indistinguishable from a fresh one by inspection. Command duration
-        // is not a network signal; live and offline observations overlap.
-        //
-        // The reset time is the one usable handle. It arrives as part of the cached
-        // payload, so a reading from a previous window carries that previous window's
-        // reset time. Once it is behind us, the figure describes a window that has
-        // already rolled over and the real current usage is unknown.
-        //
-        // Every required figure needs its own guard. A current session window does not
-        // make a weekly figure from an already-ended window trustworthy.
-        //
-        // What this does not catch: staleness *within* a current window. The session
-        // reset remains the shortest practical bound on a whole cached answer.
-        for window in [session, weekly] {
-            if let resetsAt = window.resetsAt,
-               resetsAt.addingTimeInterval(resetGrace) < now {
-                throw UsageError.claudeUsageOutdated(resetsAt: resetsAt)
-            }
-        }
-
-        return UsageSnapshot(
-            provider: .claude,
-            sourcePath: .claudeCodeCLI,
-            windows: [session, weekly],
-            fetchedAt: now,
-            sourceVersion: ProviderMetadataText.normalizedDisplay(sourceVersion)
-        )
+        return [session, weekly]
     }
 
     // MARK: - Line parsing

@@ -75,6 +75,7 @@ struct DisplayStateTests {
         .claudeCommandFailed("x"),
         .claudeCommandTimedOut,
         .claudeUsageOutdated(resetsAt: Date(timeIntervalSince1970: 1_787_576_400)),
+        .claudeUsageUnavailable,
         .offline,
         .schemaChanged("x"),
         .codexExecutableNotFound,
@@ -115,6 +116,45 @@ struct DisplayStateTests {
         #expect(UsageError.claudeNotSignedIn.shortDescription != outdated.shortDescription)
         #expect(ClaudeSignInRecovery.isAvailable(for: .claudeNotSignedIn))
         #expect(ClaudeSignInRecovery.isAvailable(for: outdated) == false)
+    }
+
+    /// Claude Code ran but had no figure from the server. The last good reading is kept
+    /// and marked as old; it is never replaced by nothing, and running `claude` to sign
+    /// in is not the step that fixes a failed lookup.
+    @Test("Claude Code 沒取得最新額度時保留舊讀數並標示為過期")
+    func aFailedLookupKeepsTheLastReadingAsStale() {
+        let previous = UsageSnapshot(
+            provider: .claude,
+            sourcePath: .claudeCodeCLI,
+            windows: [
+                UsageWindow(
+                    kind: .session,
+                    group: .session,
+                    used: UsedPercent(hundredScale: 44),
+                    resetsAt: Date(timeIntervalSince1970: 1_787_590_800),
+                    isActive: false
+                ),
+            ],
+            fetchedAt: Date(timeIntervalSince1970: 1_787_576_400)
+        )
+
+        let state = UsageDisplayState.afterFailure(.claudeUsageUnavailable, previous: previous)
+        guard case .stale(let kept, let reason) = state else {
+            Issue.record("預期 stale，實得 \(state)")
+            return
+        }
+        #expect(kept == previous)
+        #expect(reason == .claudeUsageUnavailable)
+        #expect(state.isDataTrustworthyAsCurrent == false)
+
+        guard case .unavailable = UsageDisplayState.afterFailure(.claudeUsageUnavailable, previous: nil) else {
+            Issue.record("沒有舊讀數時應為 unavailable")
+            return
+        }
+        #expect(ClaudeSignInRecovery.isAvailable(for: .claudeUsageUnavailable) == false)
+        #expect(UsageError.claudeUsageUnavailable.isThrottling == false)
+        #expect(UsageError.claudeUsageUnavailable.shortDescription
+            != UsageError.claudeUsageOutdated(resetsAt: .distantPast).shortDescription)
     }
 
     /// A missing install and an install too old to answer need different steps, and
@@ -173,9 +213,17 @@ struct ResetDescriptionTests {
 
     let now = Date(timeIntervalSince1970: 1_755_500_000)
 
+    /// Pinned because "same day" is a calendar question. `now` is seven minutes before
+    /// midnight at UTC−7, so on a machine set to Pacific time a reset ten minutes out
+    /// falls on the next day, gains a date of its own, and the comparison below fails
+    /// for a reason that has nothing to do with the formatter.
+    let timeZone = TimeZone.gmt
+
     @Test("當天重設只給時間")
     func sameDayOmitsDate() {
-        let text = TimeFormatting.resetDescription(now.addingTimeInterval(3_600), now: now)
+        let text = TimeFormatting.resetDescription(
+            now.addingTimeInterval(3_600), now: now, timeZone: timeZone
+        )
         #expect(text.contains("(in "))
     }
 
@@ -184,8 +232,10 @@ struct ResetDescriptionTests {
     @Test("跨日重設必須帶日期")
     func laterDayCarriesDate() {
         let threeDaysOut = now.addingTimeInterval(3 * 86_400)
-        let text = TimeFormatting.resetDescription(threeDaysOut, now: now)
-        let sameDay = TimeFormatting.resetDescription(now.addingTimeInterval(600), now: now)
+        let text = TimeFormatting.resetDescription(threeDaysOut, now: now, timeZone: timeZone)
+        let sameDay = TimeFormatting.resetDescription(
+            now.addingTimeInterval(600), now: now, timeZone: timeZone
+        )
         // The cross-day form is strictly longer because it carries a date the other omits.
         #expect(text.count > sameDay.count)
         #expect(text.contains("(in "))

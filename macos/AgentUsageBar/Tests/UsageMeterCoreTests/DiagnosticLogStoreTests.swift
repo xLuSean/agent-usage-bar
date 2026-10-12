@@ -71,6 +71,51 @@ struct DiagnosticLogStoreTests {
         }
     }
 
+    @Test("usage report failures retain a precise app-authored detail")
+    func retainsSafeUsageReportDetail() {
+        let expected: [(String, DiagnosticErrorDetail)] = [
+            ("Command output has no result message", .claudeResultMessageMissing),
+            ("Found 2 result messages", .claudeResultMessageDuplicated),
+            ("Found 3 usage reports", .claudeUsageReportDuplicated),
+            ("Unreadable usage report", .claudeUsageReportUnreadable),
+            ("The usage report contains no limit rows", .claudeUsageReportEmpty),
+            ("Found 2 \"session\" usage rows", .claudeUsageRowDuplicated),
+            ("Unreadable percentage in the \"weekly_all\" usage row", .claudeUsageRowPercentageInvalid),
+            ("Unreadable reset time in the \"session\" usage row", .claudeUsageRowResetInvalid),
+            ("Missing reset time in the \"weekly_all\" usage row", .claudeUsageRowResetMissing),
+        ]
+        for (rawDetail, detail) in expected {
+            #expect(DiagnosticErrorDetail(provider: .claude, error: .schemaChanged(rawDetail)) == detail)
+            // Every closed detail explains itself in both languages, and none of them is
+            // the "could not recognize" fallback.
+            for identifier in ["en_US", "zh_Hant_TW"] {
+                let message = detail.displayName(kind: .schemaChanged, locale: Locale(identifier: identifier))
+                #expect(!message.isEmpty)
+                #expect(message != DiagnosticErrorDetail.unrecognizedResponse
+                    .displayName(kind: .schemaChanged, locale: Locale(identifier: identifier)))
+            }
+            // The same wording from Codex is not a known Codex failure.
+            #expect(DiagnosticErrorDetail(provider: .codex, error: .schemaChanged(rawDetail)) == .unrecognizedResponse)
+        }
+    }
+
+    @Test("a lookup that failed inside Claude Code is its own diagnostic kind")
+    func recordsAFailedLookup() {
+        withStore { store, _ in
+            let entries = store.append(
+                provider: .claude,
+                error: .claudeUsageUnavailable,
+                now: Date(timeIntervalSince1970: 1_800_000_000)
+            )
+            #expect(entries[0].kind == .claudeUsageUnavailable)
+            #expect(entries[0].detail == .categorySummary)
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "en_US")) ==
+                    "Claude Code returned a usage report without any usage figures from the server.")
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "zh_Hant_TW")) ==
+                    "Claude Code 回傳了用量報告，但裡面沒有來自伺服器的額度資料。")
+        }
+    }
+
     @Test("dynamic provider values are reduced to a fixed diagnostic detail")
     func stripsDynamicSchemaValues() {
         withStore { store, defaults in

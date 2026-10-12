@@ -56,6 +56,10 @@ final class AppModel {
 
     private(set) var diagnosticEntries: [DiagnosticLogEntry]
 
+    /// Which usage rows the panel shows folded. Owned here so every popover, in either
+    /// menu bar layout, folds the same rows.
+    let windowDisclosure: WindowDisclosureModel
+
     var onLayoutChange: (() -> Void)?
     var onLanguageChange: (() -> Void)?
 
@@ -80,6 +84,10 @@ final class AppModel {
         claudeExecutablePath = SettingsStore.loadClaudeExecutablePath()
         codexExecutablePath = SettingsStore.loadCodexExecutablePath()
         codexTokenHistoryPeriod = SettingsStore.loadCodexTokenHistoryPeriod()
+        windowDisclosure = WindowDisclosureModel(
+            disclosure: SettingsStore.loadWindowDisclosure(),
+            persist: { SettingsStore.saveWindowDisclosure($0) }
+        )
         let loadedDiagnosticRetention = diagnosticLogStore.loadRetention()
         diagnosticRetention = loadedDiagnosticRetention
         diagnosticEntries = diagnosticLogStore.load(retention: loadedDiagnosticRetention)

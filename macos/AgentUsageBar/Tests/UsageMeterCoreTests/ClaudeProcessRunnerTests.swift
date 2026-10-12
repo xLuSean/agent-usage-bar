@@ -21,6 +21,12 @@ struct ClaudeProcessRunnerTests {
         let entries: [String]
     }
 
+    private struct ScratchContext: Decodable {
+        let cwd: String
+        let scratchRoot: String?
+        let left: String?
+    }
+
     let runner = ClaudeProcessRunner()
 
     @Test("捕捉 stdout 與正常結束")
@@ -134,6 +140,25 @@ struct ClaudeProcessRunnerTests {
         #expect(context.cwd.hasPrefix(temporaryRoot + "/"))
         #expect(context.pwd == context.cwd)
         #expect(context.entries.isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: context.cwd))
+    }
+
+    /// The fixture does what the CLI does: it creates folders under its scratch root and
+    /// leaves them. The directory is therefore no longer empty when the child exits, and
+    /// cleanup has to take the whole tree rather than an empty directory.
+    @Test("CLI 自己的暫存資料夾落在查詢目錄內，並隨目錄一併清理")
+    func removesTheCLIScratchFoldersWithTheWorkingDirectory() async throws {
+        let output = try await runner.run(
+            executable: fixtureURL,
+            arguments: ["leave-scratch-folder"],
+            timeout: 10
+        )
+        let context = try JSONDecoder().decode(ScratchContext.self, from: output.standardOutput)
+        let left = try #require(context.left)
+
+        #expect(context.scratchRoot == context.cwd)
+        #expect(left.hasPrefix(context.cwd + "/"))
+        #expect(!FileManager.default.fileExists(atPath: left))
         #expect(!FileManager.default.fileExists(atPath: context.cwd))
     }
 

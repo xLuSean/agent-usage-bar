@@ -38,6 +38,7 @@ production_settings_fingerprint() {
       v1.codexTokenHistoryDays \
       v1.codexTokenRefreshInterval \
       v1.menuBarLayout \
+      v1.windowDisclosure \
       v1.displayLanguage \
       v1.claudeExecutablePath \
       v1.codexExecutablePath \
@@ -762,7 +763,7 @@ fi
 
 # Compared after collapsing whitespace so the source can stay readable across lines,
 # while still pinning the exact tokens and their order.
-expected_arguments='"--safe-mode","--no-session-persistence","-p","/usage","--output-format","json",'
+expected_arguments='"--safe-mode","--no-session-persistence","-p","/usage","--output-format","json","--verbose",'
 actual_arguments="$(sed -n '/public static let arguments = \[/,/^    \]/p' \
   macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageCommand.swift \
   | tr -d ' \t\n' \

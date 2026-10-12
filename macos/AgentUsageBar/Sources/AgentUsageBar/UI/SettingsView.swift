@@ -458,13 +458,13 @@ private struct DeveloperSettingsTab: View {
             CodexExecutableSettings(model: model)
 
             Section {
-                Text("Claude Code answers `/usage` from the server when it can reach it, and from its own local cache when it cannot. Verified: the command still returns figures with the network off.")
+                Text("Claude Code attaches a structured usage report to `/usage`. When it could not reach the server, that report holds no figures, and the app marks the last reading as stale instead of showing the older numbers Claude Code still prints. Verified with the network blocked.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("A cached reading carries no as-of time, so the app bounds it by the reset time instead: once a reading's window has ended, it is reported as unavailable rather than shown. What this does not catch is staleness within the current window — up to five hours for the session limit.")
+                Text("A reading can still be about a minute old, because Claude Code briefly reuses a fresh answer. An older Claude Code attaches no report; the app then reads the printed text, which can come from a local cache with no as-of time, and bounds it by the reset time. That does not catch staleness within the current window — up to five hours for the session limit.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Text("Rate limits apply per account. Because the query now runs through Claude Code itself rather than a direct call from this app, throttling is handled by the CLI — which also means a throttled query may return cached figures instead of an explicit error.")
+                Text("Rate limits apply per account. The query runs through Claude Code itself rather than as a direct call from this app, so throttling is handled by the CLI. Whether a throttled lookup reports no figures or its last known ones has not been observed.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } header: {

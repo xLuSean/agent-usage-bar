@@ -119,10 +119,10 @@ Requirements: macOS 14 or later, Apple Silicon, and a locally installed and sign
 The app runs Claude Code's own read-only command and parses the values it reports:
 
 ```bash
-claude --safe-mode --no-session-persistence -p "/usage" --output-format json
+claude --safe-mode --no-session-persistence -p "/usage" --output-format json --verbose
 ```
 
-Observed runs do not invoke a model or consume conversation allowance (`num_turns=0`, with every token count at zero). `--safe-mode` reuses the existing sign-in while avoiding hooks, plugins, MCP, and project settings. `--no-session-persistence` prevents this invocation from leaving a session behind.
+Observed runs do not invoke a model or consume conversation allowance (`num_turns=0`, with every token count at zero). `--safe-mode` reuses the existing sign-in while avoiding hooks, plugins, MCP, and project settings. `--no-session-persistence` prevents this invocation from leaving a session behind. `--verbose` makes the output include a structured usage report, which the app reads in preference to the printed text.
 
 **The app does not read your Keychain credentials.** The earlier direct OAuth/Keychain prototype has been completely removed; the public version contains no such path or automatic fallback. Claude Code remains responsible for sign-in and credential renewal.
 
@@ -142,9 +142,13 @@ The app intentionally does not launch an interactive CLI automatically, perform 
 
 ### Data freshness
 
-When connected, `/usage` updates its data. When offline, it **silently falls back to Claude Code's local cache**. In one controlled observation on August 28, 2026, a Wi-Fi-only Mac still returned the previous window's complete stale data after Wi-Fi was disabled and the known reset time passed. Only another query after Wi-Fi was restored returned the new window. Command duration cannot prove connectivity because observed online and offline times overlapped, and the output itself does not include the time when the data was obtained.
+The `/usage` output carries the same figures twice: a structured usage report and text printed for a person. They behave differently when the data cannot be fetched.
 
-The app therefore treats reset time as a freshness boundary. Before reset, a cache entry still belongs to the current window. After reset, it describes a window that has ended and is shown as Unavailable instead of as a percentage.
+**With a report.** When Claude Code cannot reach the usage service, the report has no limit rows. The app treats that as a failed query, keeps the previous reading, and marks it Stale instead of showing a new number. Observed on October 11, 2026 with the network blocked: the text still printed the earlier figures while the report had no rows. When the report does have rows, the figures are at most about a minute old, because Claude Code briefly reuses a fresh answer.
+
+**Without a report** (an older Claude Code, or a sign-in the report is not offered for), the app can only read the text, and when offline the text **silently falls back to Claude Code's local cache**. In one controlled observation on August 28, 2026, a Wi-Fi-only Mac still returned the previous window's complete stale data after Wi-Fi was disabled and the known reset time passed. Only another query after Wi-Fi was restored returned the new window. Command duration cannot prove connectivity because observed online and offline times overlapped, and the output itself does not include the time when the data was obtained.
+
+The app therefore treats reset time as a freshness boundary, whichever of the two the figures came from. Before reset, a cache entry still belongs to the current window. After reset, it describes a window that has ended and is shown as Unavailable instead of as a percentage.
 
 This guard applies independently to both required session and weekly windows. If either window has passed its reset time, the complete reading is unavailable. The IANA timezone named by the CLI must also be recognized; the app never guesses using the Mac's local timezone.
 

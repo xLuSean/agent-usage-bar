@@ -19,6 +19,8 @@ App 不做的事，這是硬性清單：
 
 工作目錄隔離不改 `HOME` 或 provider-specific home。官方 CLI 仍能使用自己管理的登入狀態；App 只讓實際 cwd 與 `PWD` 指向同一個空白本機目錄。這避免 CLI 初始化時把 LaunchServices 常見的 `/` cwd 當成專案，進而碰到根目錄下的網路 volume、自動掛載點或其他受保護資料夾。
 
+Claude 子程序另外把 Claude Code 自己的暫存根目錄（`CLAUDE_CODE_TMPDIR`）指向同一個目錄。Claude Code 會替每次執行留下一個以工作目錄命名的暫存資料夾；留在它預設的 `/tmp/claude-<uid>/` 就是每次查詢多一個，而那個位置不屬於本 App，本 App 不去清理。導向查詢目錄後，這些資料夾隨目錄一起移除。`TMPDIR` 不變，App 也仍然不讀取、不刪除 Claude Code 在其他位置的任何檔案。
+
 ### 1.1 Codex App Server 邊界
 
 Codex provider 不讀取 `auth.json`、任務 JSONL、SQLite、cache 或登入 token。它以 `Process.executableURL` 直接執行使用者指定或驗證過的 `codex` 一般檔案，arguments 固定為 `app-server --listen stdio://`，不經 shell。協定依據是官方 [Codex App Server 文件](https://learn.chatgpt.com/docs/app-server)；本 App 只使用本機 stdio，不開任何遠端 listener。
@@ -30,13 +32,16 @@ Codex provider 不讀取 `auth.json`、任務 JSONL、SQLite、cache 或登入 t
 0.3.0 起，App **不再讀取 OAuth 憑證**。額度數字改由 Claude Code 自己回報：
 
 ```bash
-claude --safe-mode --no-session-persistence -p "/usage" --output-format json
+claude --safe-mode --no-session-persistence -p "/usage" --output-format json --verbose
 ```
 
 實測（Claude Code 2.1.231）：`is_error=false`、`num_turns=0`、所有 token 計數為 0、`total_cost_usd=0`。這個查詢不跑模型、不消耗對話額度。
 
 - `--safe-mode` 沿用既有登入，同時避開 hooks、plugins、MCP 與專案自訂設定。
 - `--no-session-persistence` 讓這次一次性呼叫不留下 session。回應仍帶一個 `session_id`，App **不保存也不顯示**。
+- `--verbose` 只改變印出什麼：輸出從最後一則結果訊息，變成這次執行每一則訊息組成的陣列，其中一則附有結構化的用量報告。它不增加任何動作；2026-10-11 以 Claude Code 2.1.287 實測，加上後仍是 `num_turns=0`、token 計數全為 0。
+
+陣列比原本多帶了不該碰的東西：開頭訊息列出工作目錄、session 與這次執行的每個工具與指令，另一則訊息帶著本機活動統計的原文。解碼器只讀兩處 —— 結果訊息的成功訊號與文字、以及用量報告的額度列 —— 其餘不解析、不保存、不顯示、不進錯誤訊息。欄位與規則見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §2–§3。
 
 ### 2.1 arguments 是常數，不是參數
 
@@ -58,7 +63,19 @@ CLI 回報未登入時，面板提供 `claude` 讓使用者自己去終端機執
 
 ## 3. 資料新鮮度：這條路的主要弱點
 
-`/usage` 連不上伺服器時會**安靜地退回 Claude Code 的本機快取**（實測：斷網仍回傳數字），而輸出裡**沒有「這筆數字是幾點拿到的」**。所以一筆過舊的讀數，光看內容分辨不出來。
+`/usage` 印出的文字在連不上伺服器時會**安靜地退回 Claude Code 的本機快取**（實測：斷網仍回傳數字），而輸出裡**沒有「這筆數字是幾點拿到的」**。所以一筆過舊的讀數，光看文字分辨不出來。
+
+同一份輸出附的結構化用量報告不會這樣：查不到的時候它沒有額度列。App 因此優先讀報告，並把三種情況分開處理：
+
+| 輸出 | App 的做法 | 新鮮度的上限 |
+|---|---|---|
+| 報告有額度列 | 讀列 | 大約一分鐘 —— Claude Code 會短暫沿用剛取得的答案 |
+| 報告沒有額度列 | 當成這次查詢失敗，保留 App 自己上一筆讀數並標示為過期。**不讀文字** | 不適用，不顯示新數字 |
+| 沒有附報告（較舊的 Claude Code，或不符合條件的登入） | 讀文字，套用 §3.1 的守門 | 一個時間窗，session 最壞接近 5 小時 |
+
+第二種情況不退回文字是刻意的：那正是文字會印出舊數字的時候。觀察紀錄與尚未驗證的部分見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §7 與 §10。
+
+所以這一節接下來描述的弱點，現在只在第三種情況下成立。§3.1 的守門則不分來源，兩個必要額度都要通過。
 
 ### 3.1 用 reset 時間當守門
 
@@ -99,7 +116,7 @@ resetsAt:      <absolute Unix timestamp>
 
 腳本的網路探針不能當證據：它用仍留在路由表裡的預設路線判成 `net=online`，但測試機只有 Wi-Fi，且 Wi-Fi 當時確實關閉。路由項目存在不等於仍可連線；之後不得再用這個探針或 `duration_ms` 判斷離線。
 
-**一個由 source 保證的下限。** weekly 那行的重置時間在解析器裡是**必要**的，session 那行才是選用（[ClaudeUsageTextDecoder.swift:95](../macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageTextDecoder.swift#L95)）。因此每一份被接受的讀數，至少帶著一個 `resetsAt` 進入守門迴圈 —— **守門不可能因為「這份讀數沒有重置時間」而整個被繞過。**
+**一個由 source 保證的下限。** weekly 的重置時間在兩條路徑的解析器裡都是**必要**的，session 的才是選用（文字見 [ClaudeUsageTextDecoder.swift](../macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageTextDecoder.swift)，報告見 [ClaudeUsageReportDecoder.swift](../macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageReportDecoder.swift)）。因此每一份被接受的讀數，至少帶著一個 `resetsAt` 進入守門迴圈 —— **守門不可能因為「這份讀數沒有重置時間」而整個被繞過。**
 
 但要講清楚它保證到哪裡為止：weekly 的重置一週才動一次，所以一份「新的 session 重置搭配舊的百分比」的讀數，仍可能從一個還有好幾天才到期的 weekly 重置底下通過。這條擋掉的是「守門完全不作用」，不是 (B)。
 
@@ -117,7 +134,7 @@ resetsAt:      <absolute Unix timestamp>
 
 ### 3.3 守門抓不到什麼
 
-**窗內的落後抓不到。** 最壞情況是一筆最多 5 小時舊、但看起來正常的 session 數字。這是改走 CLI `/usage` 之後保留的已知限制，後果是「數字偏舊」。§3.2 只證明目前測試的 CLI 版本在那一次離線跨窗時沒有發生 (B)；日後版本若改變快取寫法，仍須重新驗證。
+**窗內的落後抓不到。** 讀文字時，最壞情況是一筆最多 5 小時舊、但看起來正常的 session 數字。這是改走 CLI `/usage` 之後保留的已知限制，後果是「數字偏舊」；有結構化報告可讀時不受這條限制，見本節開頭的表格。§3.2 只證明目前測試的 CLI 版本在那一次離線跨窗時沒有發生 (B)；日後版本若改變快取寫法，仍須重新驗證。
 ## 4. 額度消耗
 
 **兩條查詢都不消耗使用者的對話額度。** Claude 是 CLI 的 `/usage` 指令（實測 `num_turns=0`、所有 token 計數為 0）；Codex 是 App Server 的帳號限額讀取。這條直接排除了以推論請求測量推論額度的做法 —— 曾評估過對 `POST /v1/messages` 送極小請求再讀 header，該路徑可用但本身就是一次推論，因此從未實作，並隨舊路徑一起退場。
@@ -126,7 +143,7 @@ resetsAt:      <absolute Unix timestamp>
 
 限流仍以**帳號**計算 —— 帳號沒變，`/usage` 連網時打的多半也是同一類端點。但發請求的人從本 App 變成了 Claude Code：重試行為、指紋與退避都在 CLI 手上，App 預設每 10 分鐘請它回答一次。
 
-**這帶來一個觀測能力的退步，必須寫清楚：** 被限流時 CLI 多半會像離線一樣安靜地退回本機快取，所以 App 拿到的是一個看起來正常的舊數字，而不是明確的 `throttled` 狀態與恢復時間。§3 的 reset 守門是這種情況下唯一的防線，而它只擋得住舊超過一個窗的資料。
+**這帶來一個觀測能力的退步，必須寫清楚：** App 拿不到明確的 `throttled` 狀態與恢復時間。被限流時文字多半會像離線一樣安靜地印出本機快取；結構化報告在這種情況下是沒有額度列、還是帶著上次已知的列，**沒有觀察過**，也沒有在真實帳號上刻意觸發限流去測。若是前者，App 會顯示上一筆讀數並標示為過期；若是後者，App 會把它當成一般讀數，這時 §3 的 reset 守門是唯一的防線，而它只擋得住舊超過一個窗的資料。
 
 App 自己的節流參數仍然保留，理由從「避免被罰」變成「不要替 CLI 增加沒有意義的認證請求」：
 
@@ -164,7 +181,9 @@ App 自身識別（Dock 圖示、About、DMG）一律不使用他人標誌。Abo
 
 誠實記錄，不因為看起來完成而標記為完成：
 
-- **`/usage` 文字格式的長期穩定性未知。** 百分比包在為人閱讀的英文散文裡，沒有欄位 schema。解析器逐字錨定兩行、對不上就 fail closed，所以格式改變會變成「顯示未知」而不是「顯示錯的數字」—— 但功能確實會失效。這是產品風險，不是實作缺陷。
+- **結構化用量報告是官方標示的實驗性欄位。** 形狀可能改變，也可能不再附上。不附上時 App 退回文字；形狀改變時兩個必要額度 fail closed，結果是「顯示未知」而不是「顯示錯的數字」。報告在限流時與在兩段 session 之間的空檔長什麼樣子都還沒觀察到，見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §10。
+- **「報告沒有額度列」的觀察是用封鎖對外連線做的。** 單一 Claude Code 版本、少數樣本，不是實際關閉網路介面，也不是永久契約。
+- **`/usage` 文字格式的長期穩定性未知。** 文字是沒有報告時的備援。百分比包在為人閱讀的英文散文裡，沒有欄位 schema。解析器逐字錨定兩行、對不上就 fail closed，所以格式改變會變成「顯示未知」而不是「顯示錯的數字」—— 但功能確實會失效。這是產品風險，不是實作缺陷。
 - **背景 `/usage` 偶爾可能要先啟動互動式 Claude Code。** 實機曾連續得到無法辨識的回應，直到使用者在 Terminal 啟動一次 `claude` 後才恢復。登入、續期或本機初始化是合理推測，但根因未由官方契約或可重現實驗確認；因此 App 只提供複製 `claude` 的人工 workaround，不自動登入、不改憑證，也不把這個現象降級成可信讀數。
 - **輸出是否會依系統語言在地化，部分排除。** 實測 2026-08-26：以 `LANG=zh_TW.UTF-8 LC_ALL=zh_TW.UTF-8` 執行，回傳的仍是同一份英文，**`/usage` 目前根本不看 locale 環境變數**。子程序仍固定 `LANG`／`LC_ALL` 作為保險，但真正保護讀數的是 fail-closed 的解析器。尚未排除的是：若日後改以設定檔或帳號語言偏好在地化，仍會讓解析失敗（結果是顯示「未知」，不是解錯數字）。
 - **跨窗行為只直接觀察過一次。** 2026-08-28 在單一 Claude Code 版本上，離線跨過 reset 與 60 秒寬限後，舊百分比與舊 reset 一起保留，守門正確拒絕；恢復 Wi-Fi 後才取得 `0%`、無 reset 的新窗輸出。這提高了對現行守門的信心，但不是未來版本的永久保證。

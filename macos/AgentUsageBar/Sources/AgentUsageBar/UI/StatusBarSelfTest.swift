@@ -377,6 +377,33 @@ enum StatusBarSelfTest {
             checkImageLayout(layout == .separate ? [21, 21] : [41], "Recovery to 10% restores gauges")
         }
 
+        // Folding a row changes the panel's height after the popover has been sized.
+        // The popover has to follow, in both layouts, or the panel is clipped or left
+        // with a gap under the buttons. A render check cannot see this: it measures a
+        // view, not a popover.
+        for layout in [MenuBarLayout.separate, .combined] {
+            model.menuBarLayout = layout
+            claude.applyDemoScenario(.healthy)
+            codex.applyDemoScenario(.healthy)
+            guard let session = claude.state.snapshot?.windows.first(where: { $0.kind == .session }),
+                  let heights = controller.foldResizeDiagnostics(folding: session, of: .claude) else {
+                check(false, "\(layout.rawValue): could not build a popover to fold a row in")
+                continue
+            }
+            check(
+                heights.folded < heights.opened,
+                "\(layout.rawValue): folding a row shrinks the popover (\(Int(heights.opened)) → \(Int(heights.folded)) pt)"
+            )
+            check(
+                heights.unfolded == heights.opened,
+                "\(layout.rawValue): unfolding it restores the height (\(Int(heights.unfolded)) pt)"
+            )
+        }
+        check(
+            model.windowDisclosure.disclosure == WindowDisclosure(),
+            "The fold check leaves no row folded behind it"
+        )
+
         print(failures.isEmpty ? "\nselftest passed" : "\nselftest FAILED: \(failures.count) items")
         return failures.isEmpty ? 0 : 1
     }
@@ -458,6 +485,60 @@ enum StatusBarSelfTest {
                 return failures == 0 ? 0 : 1
             }
             check(true, "A reading past its reset time reports claudeUsageOutdated")
+        } catch {
+            check(false, "Unexpected error type \(error)")
+        }
+
+        // 4. The shape the fixed command actually prints: the array, with the structured
+        //    report attached. The rows win over the prose beside them, which reads 42%.
+        let reported = ClaudeUsageProvider(
+            locator: ClaudeExecutableLocator(configuredPath: "/bin/echo", environment: [:]),
+            runner: StubUsageRunner(
+                output: SelfTestUsageOutput.verbose(
+                    prose: SelfTestUsageOutput.json(sessionPercent: 42, resetsAt: resets),
+                    rows: SelfTestUsageOutput.rows(sessionPercent: 17, resetsAt: resets)
+                )
+            ),
+            now: { now }
+        )
+        do {
+            let snapshot = try await reported.fetch()
+            check(
+                snapshot.representativeWindow?.used.usedPercent == 17,
+                "Report rows are read in preference to the prose (got \(snapshot.representativeWindow?.used.usedPercent ?? -1))"
+            )
+            check(
+                snapshot.windows.contains { $0.kind == .weeklyScoped && $0.modelDisplayName == "Example Model" },
+                "A per-model weekly row decodes with its label"
+            )
+            check(
+                snapshot.windows.first { $0.kind == .weeklyAll }?.isActive == true,
+                "The row the server marks as binding is marked as binding"
+            )
+        } catch {
+            check(false, "A well-formed usage report must decode (got \(error))")
+        }
+
+        // 5. Claude Code ran but had no figure from the server. The prose still prints
+        //    42%, and that is exactly what must not be shown.
+        let unavailable = ClaudeUsageProvider(
+            locator: ClaudeExecutableLocator(configuredPath: "/bin/echo", environment: [:]),
+            runner: StubUsageRunner(
+                output: SelfTestUsageOutput.verbose(
+                    prose: SelfTestUsageOutput.json(sessionPercent: 42, resetsAt: resets),
+                    rows: nil
+                )
+            ),
+            now: { now }
+        )
+        do {
+            _ = try await unavailable.fetch()
+            check(false, "A report with no rows must not fall back to the prose")
+        } catch let error as UsageError {
+            check(
+                error == .claudeUsageUnavailable,
+                "A report with no rows reports claudeUsageUnavailable (got \(error.shortDescription))"
+            )
         } catch {
             check(false, "Unexpected error type \(error)")
         }
@@ -686,6 +767,34 @@ private enum SelfTestUsageOutput {
             "result": result,
         ]
         let data = (try? JSONSerialization.data(withJSONObject: envelope)) ?? Data()
+        return ClaudeCommandOutput(exitCode: 0, standardOutput: data)
+    }
+
+    /// Synthetic report rows: the two required meters and one per-model weekly limit.
+    static func rows(sessionPercent: Int, resetsAt: Date) -> [[String: Any]] {
+        let stamp = ISO8601DateFormatter().string(from: resetsAt)
+        return [
+            ["kind": "session", "group": "session", "percent": sessionPercent,
+             "resets_at": stamp, "is_active": false],
+            ["kind": "weekly_all", "group": "weekly", "percent": 7,
+             "resets_at": stamp, "is_active": true],
+            ["kind": "weekly_scoped", "group": "weekly", "percent": 3,
+             "resets_at": stamp, "is_active": false,
+             "scope": ["model": ["display_name": "Example Model"]]],
+        ]
+    }
+
+    /// The array the fixed command prints with `--verbose`. `rows == nil` is a report
+    /// with no figure from the server.
+    static func verbose(prose: ClaudeCommandOutput, rows: [[String: Any]]?) -> ClaudeCommandOutput {
+        let result = (try? JSONSerialization.jsonObject(with: prose.standardOutput)) as? [String: Any] ?? [:]
+        let limits: Any = rows.map { $0 as Any } ?? NSNull()
+        let messages: [[String: Any]] = [
+            ["type": "system", "subtype": "init"],
+            ["type": "assistant", "usage_report": ["rate_limits": ["limits": limits]]],
+            result.merging(["type": "result"]) { _, new in new },
+        ]
+        let data = (try? JSONSerialization.data(withJSONObject: messages)) ?? Data()
         return ClaudeCommandOutput(exitCode: 0, standardOutput: data)
     }
 }

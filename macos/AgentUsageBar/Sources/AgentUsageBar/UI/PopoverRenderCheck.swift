@@ -127,6 +127,78 @@ enum PopoverRenderCheck {
             }
         }
 
+        // Folding a row has to change the panel's height, in both directions. The
+        // popover is sized from exactly this measurement, so a fold that left the
+        // height alone would show up on screen as a clipped panel or a gap under the
+        // buttons — and nowhere in a compile.
+        do {
+            presenter.applyDemoScenario(.healthy)
+            let windows = presenter.state.snapshot?.orderedWindows ?? []
+            check(
+                windows.map(\.kind) == [.session, .weeklyAll, .weeklyScoped],
+                "Fold check: the healthy scenario has a session, a weekly, and a per-model row"
+            )
+
+            let byDefault = WindowDisclosureModel()
+            let allUnfolded = WindowDisclosureModel()
+            let allFolded = WindowDisclosureModel()
+            for window in windows {
+                if allUnfolded.isCollapsed(window, provider: .claude) {
+                    allUnfolded.toggle(window, provider: .claude)
+                }
+                if !allFolded.isCollapsed(window, provider: .claude) {
+                    allFolded.toggle(window, provider: .claude)
+                }
+            }
+            check(
+                windows.map { byDefault.isCollapsed($0, provider: .claude) } == [false, false, true],
+                "Fold check: only the per-model row starts folded"
+            )
+
+            func host(_ disclosure: WindowDisclosureModel) -> NSHostingController<UsagePopoverView> {
+                NSHostingController(
+                    rootView: UsagePopoverView(
+                        presenter: presenter,
+                        language: .english,
+                        allowsScrolling: false,
+                        disclosure: disclosure,
+                        onOpenSettings: {}
+                    )
+                )
+            }
+            func naturalHeight(_ disclosure: WindowDisclosureModel) -> CGFloat {
+                ceil(host(disclosure).sizeThatFits(in: NSSize(width: 320, height: 10_000)).height)
+            }
+            let foldedHeight = naturalHeight(allFolded)
+            let defaultHeight = naturalHeight(byDefault)
+            let unfoldedHeight = naturalHeight(allUnfolded)
+            check(
+                foldedHeight < defaultHeight && defaultHeight < unfoldedHeight,
+                "Fold check: all folded (\(Int(foldedHeight)) pt) < default (\(Int(defaultHeight)) pt) < all unfolded (\(Int(unfoldedHeight)) pt)"
+            )
+            // No assertion on how much each fold removes: rows are not equally tall. A reset
+            // line that carries a date wraps onto a second line, so its row gives back more.
+
+            let appearance = NSAppearance(named: .aqua)!
+            for (label, disclosure) in [("Rows folded / Light", allFolded), ("Rows unfolded / Light", allUnfolded)] {
+                let controller = host(disclosure)
+                controller.view.appearance = appearance
+                controller.view.frame = NSRect(origin: .zero, size: contentSize)
+                controller.view.layoutSubtreeIfNeeded()
+                if let rep = controller.view.bitmapImageRepForCachingDisplay(in: controller.view.bounds) {
+                    appearance.performAsCurrentDrawingAppearance {
+                        controller.view.cacheDisplay(in: controller.view.bounds, to: rep)
+                    }
+                    check(rep.pixelsHigh > 0, "\(label): rendered \(rep.pixelsWide)×\(rep.pixelsHigh) pixels")
+                    let image = NSImage(size: contentSize)
+                    image.addRepresentation(rep)
+                    images.append((label, image, NSColor(white: 0.96, alpha: 1)))
+                } else {
+                    check(false, "\(label): could not create bitmap rep")
+                }
+            }
+        }
+
         // One Chinese popover exercises the app-selected locale through the same view
         // and domain-formatting path. English remains the longest-copy stress pass.
         do {

@@ -18,6 +18,7 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
     case claudeCommandFailed
     case claudeCommandTimedOut
     case claudeUsageOutdated
+    case claudeUsageUnavailable
     case codexExecutableNotFound
     case codexExecutableInvalid
     case codexNotLoggedIn
@@ -39,6 +40,7 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .claudeCommandFailed: .claudeCommandFailed
         case .claudeCommandTimedOut: .claudeCommandTimedOut
         case .claudeUsageOutdated: .claudeUsageOutdated
+        case .claudeUsageUnavailable: .claudeUsageUnavailable
         case .codexExecutableNotFound: .codexExecutableNotFound
         case .codexExecutableInvalid: .codexExecutableInvalid
         case .codexNotLoggedIn: .codexNotLoggedIn
@@ -63,6 +65,7 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .claudeCommandFailed: chinese ? "Claude Code 查詢失敗" : "Claude Code usage query failed"
         case .claudeCommandTimedOut: chinese ? "Claude Code 查詢逾時" : "Claude Code usage query timed out"
         case .claudeUsageOutdated: chinese ? "額度資料已跨過重置時間" : "Usage reading is past its reset time"
+        case .claudeUsageUnavailable: chinese ? "Claude Code 未取得最新額度" : "Claude Code has no current usage data"
         case .codexExecutableNotFound: chinese ? "找不到 Codex CLI" : "Codex CLI not found"
         case .codexExecutableInvalid: chinese ? "Codex CLI 路徑不可用" : "Codex CLI path unavailable"
         case .codexNotLoggedIn: chinese ? "尚未登入 Codex" : "Not signed in to Codex"
@@ -107,6 +110,9 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .claudeUsageOutdated:
             chinese ? "Claude Code 回傳的快取資料已跨過其中一個重置時間。" :
                 "Claude Code returned cached data that had passed one of its reset times."
+        case .claudeUsageUnavailable:
+            chinese ? "Claude Code 回傳了用量報告，但裡面沒有來自伺服器的額度資料。" :
+                "Claude Code returned a usage report without any usage figures from the server."
         case .codexExecutableNotFound:
             chinese ? "App 找不到 Codex CLI。" : "The app could not find the Codex CLI."
         case .codexExecutableInvalid:
@@ -153,6 +159,15 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
     case claudeWeeklyResetInvalid
     case claudeWeeklyResetMissing
     case claudeCommandExitedNonzero
+    case claudeResultMessageMissing
+    case claudeResultMessageDuplicated
+    case claudeUsageReportDuplicated
+    case claudeUsageReportUnreadable
+    case claudeUsageReportEmpty
+    case claudeUsageRowDuplicated
+    case claudeUsageRowPercentageInvalid
+    case claudeUsageRowResetInvalid
+    case claudeUsageRowResetMissing
     case codexResponseNotJSONObject
     case codexRateLimitsMissing
     case codexWindowsMissing
@@ -239,6 +254,33 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
         case .claudeCommandExitedNonzero:
             chinese ? "Claude Code 的唯讀用量指令以非零狀態結束。" :
                 "Claude Code's read-only usage command exited with a nonzero status."
+        case .claudeResultMessageMissing:
+            chinese ? "Claude Code 的輸出裡沒有 result 訊息。" :
+                "Claude Code's output did not contain a result message."
+        case .claudeResultMessageDuplicated:
+            chinese ? "Claude Code 的輸出裡有不只一則 result 訊息，App 無法安全選擇。" :
+                "Claude Code's output contained more than one result message, so the app could not safely choose one."
+        case .claudeUsageReportDuplicated:
+            chinese ? "Claude Code 的輸出裡有不只一份用量報告，App 無法安全選擇。" :
+                "Claude Code's output contained more than one usage report, so the app could not safely choose one."
+        case .claudeUsageReportUnreadable:
+            chinese ? "Claude Code 附上了用量報告，但它的結構不是 App 預期的形狀。" :
+                "Claude Code attached a usage report whose structure was not what the app expects."
+        case .claudeUsageReportEmpty:
+            chinese ? "Claude Code 的用量報告沒有列出任何額度。" :
+                "Claude Code's usage report did not list any limits."
+        case .claudeUsageRowDuplicated:
+            chinese ? "Claude Code 的用量報告把同一種必要額度列了不只一次，App 無法安全選擇。" :
+                "Claude Code's usage report listed a required limit more than once, so the app could not safely choose one."
+        case .claudeUsageRowPercentageInvalid:
+            chinese ? "Claude Code 的用量報告裡，有一列必要額度的百分比不是 0 到 100 的數字。" :
+                "A required limit in Claude Code's usage report had a percentage that was not a number from 0 through 100."
+        case .claudeUsageRowResetInvalid:
+            chinese ? "Claude Code 的用量報告裡，有一列必要額度的重置時間無法解析。" :
+                "A required limit in Claude Code's usage report had an unreadable reset time."
+        case .claudeUsageRowResetMissing:
+            chinese ? "Claude Code 的用量報告裡，有一列必要額度缺少重置時間。" :
+                "A required limit in Claude Code's usage report was missing its reset time."
         case .codexResponseNotJSONObject:
             chinese ? "Codex App Server 的 rate-limit 回應不是 JSON 物件。" :
                 "Codex App Server's rate-limit response was not a JSON object."
@@ -268,6 +310,19 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
         case .claude:
             if rawDetail == "Command output is not a JSON object" { return .claudeOutputNotJSONObject }
             if rawDetail == "Missing result text" { return .claudeResultTextMissing }
+            if rawDetail == "Command output has no result message" { return .claudeResultMessageMissing }
+            if rawDetail == "Unreadable usage report" { return .claudeUsageReportUnreadable }
+            if rawDetail == "The usage report contains no limit rows" { return .claudeUsageReportEmpty }
+            if rawDetail.hasPrefix("Found ") {
+                if rawDetail.hasSuffix(" result messages") { return .claudeResultMessageDuplicated }
+                if rawDetail.hasSuffix(" usage reports") { return .claudeUsageReportDuplicated }
+                if rawDetail.hasSuffix("\" usage rows") { return .claudeUsageRowDuplicated }
+            }
+            if rawDetail.hasSuffix("\" usage row") {
+                if rawDetail.hasPrefix("Unreadable percentage in the \"") { return .claudeUsageRowPercentageInvalid }
+                if rawDetail.hasPrefix("Unreadable reset time in the \"") { return .claudeUsageRowResetInvalid }
+                if rawDetail.hasPrefix("Missing reset time in the \"") { return .claudeUsageRowResetMissing }
+            }
             if matchesLineDetail(rawDetail, label: "Current session", kind: "missing") { return .claudeSessionLineMissing }
             if matchesLineDetail(rawDetail, label: "Current session", kind: "unreadable") { return .claudeSessionLineUnreadable }
             if matchesLineDetail(rawDetail, label: "Current session", kind: "duplicated") { return .claudeSessionLineDuplicated }

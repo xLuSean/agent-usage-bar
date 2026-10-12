@@ -29,7 +29,9 @@ UsageProvider protocol           fetch() async throws -> UsageSnapshot
   ├─ ClaudeUsageProvider
   │    ├─ ClaudeExecutableLocator    GUI PATH、指定路徑與可執行驗證
   │    ├─ ClaudeUsageCommand         固定 arguments；唯一可建構 Process 的地方
-  │    ├─ ClaudeUsageTextDecoder     外層 JSON ＋ 兩行錨定文字；fail closed
+  │    ├─ ClaudeUsageDecoder         輸出陣列 → 用量報告或文字；決定讀哪一個
+  │    ├─ ClaudeUsageReportDecoder   結構化額度列；兩個必要額度 fail closed
+  │    ├─ ClaudeUsageTextDecoder     兩行錨定文字；沒有報告時的備援，fail closed
   │    └─ ClaudeSignInRecovery       只提供可複製的登入指令，不執行登入
   ├─ CodexUsageProvider
   │    ├─ CodexExecutableLocator      GUI PATH、指定路徑與可執行驗證
@@ -200,11 +202,17 @@ popover 開啟前先以不捲動的 SwiftUI view 測量自然高度。螢幕可�
 
 ## 12. Claude `/usage` 解碼與子程序生命週期
 
-`/usage` 把百分比與 reset 包在人類閱讀的文字裡。Decoder 必須同時讀到 session 與 weekly，並逐一確認 reset 尚未超過 60 秒寬限；任何一個窗已結束，整份快取就不可用。session 缺少 reset 只在明確為 `0%` 時接受，任何非零值都 fail closed；weekly 仍一律要求 reset。文字指定的 IANA timezone 是資料契約的一部分，無法辨識時直接 fail closed，不使用本機或呼叫端時區猜測。
+`--verbose` 的輸出是一個 JSON 陣列，同一批額度數字出現兩次：`assistant` 訊息上的結構化 `usage_report`，以及 `result` 訊息裡給人閱讀的文字。`ClaudeUsageDecoder` 決定讀哪一個：有報告且有額度列就讀列；有報告但沒有額度列時回報 `claudeUsageUnavailable`，**不退回文字** —— 那正是文字會印出舊快取的時候；沒有附報告才讀文字。完整的判斷表見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §2.1。
+
+不論來源，Decoder 都必須同時讀到 session 與 weekly，並逐一確認 reset 尚未超過 60 秒寬限；任何一個窗已結束，整份讀數就不可用。session 缺少 reset 只在明確為 `0%` 時接受，任何非零值都 fail closed；weekly 仍一律要求 reset。報告裡其餘的額度列（各模型的週上限等）盡力而為：讀得懂就顯示，讀不懂就略過，不得拖垮那兩個必要數字。文字指定的 IANA timezone 是資料契約的一部分，無法辨識時直接 fail closed，不使用本機或呼叫端時區猜測。
+
+陣列的開頭訊息列出工作目錄、session 與這次執行的工具清單，另有本機活動統計的原文。這些一律不讀；失敗分類在輸出是陣列時也只看 `result` 訊息自己的文字，不取輸出開頭的一段。
 
 與 Codex 相反：**每次查詢一個新的短命子程序，不長駐。** `/usage` 是一次性回答，沒有 handshake 也沒有推播，維持一條連線只會多一個要管的失敗狀態。
 
-每次 Claude 查詢也建立一個新的空白私人工作目錄；`/usage` 完成、失敗、逾時或取消並確認 child 結束後立即清理。它只改 cwd 與 `PWD`，不改 `HOME`，因此 Claude Code 仍使用自己的登入與全域設定，但不會把 `/`、App 安裝位置或使用者正在工作的 repository 當成這次查詢的專案。
+每次 Claude 查詢也建立一個新的空白私人工作目錄；`/usage` 完成、失敗、逾時或取消並確認 child 結束後立即清理。它只改 cwd、`PWD` 與 Claude Code 自己的暫存根目錄，不改 `HOME` 或 `TMPDIR`，因此 Claude Code 仍使用自己的登入與全域設定，但不會把 `/`、App 安裝位置或使用者正在工作的 repository 當成這次查詢的專案。
+
+Claude Code 會在自己的暫存根目錄（macOS 預設 `/tmp/claude-<uid>/`）替每次執行建立以工作目錄命名的資料夾，而且不會自行刪除。每次查詢的工作目錄都是新的，所以放著不管就是每查一次多一個空資料夾，留在一個不屬於本 App、本 App 也不該去清的位置。子程序因此另外帶 `CLAUDE_CODE_TMPDIR`，指向同一個查詢目錄：CLI 啟動後才在裡面建立自己的 `claude-<uid>/`，啟動當下目錄仍是空的，結束後隨查詢目錄整棵清掉。
 
 `ClaudeUsageCommand.arguments` 是常數，沒有設定介面餵它，也沒有任何回應能影響它。執行時 stdin 接 `/dev/null`、stdout 與 stderr 各自有位元組上限並與 `waitUntilExit()` 併行讀取（先等結束再讀，輸出一超過 pipe buffer 就會死鎖）。`ByteSink` 的 buffer 由 lock 保護；hard deadline 從另一條 queue 關閉 read end 時，drain 以預期的 read failure 結束。
 

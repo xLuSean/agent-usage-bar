@@ -49,7 +49,7 @@ struct ClaudeUsageTextDecoderTests {
     // MARK: - The happy path
 
     @Test func decodesBothWindows() throws {
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(Self.body()),
             now: Self.now,
             timeZone: Self.taipei
@@ -78,7 +78,7 @@ struct ClaudeUsageTextDecoderTests {
           Top MCP servers: Example 10%
         """
 
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(text),
             now: Self.now,
             timeZone: Self.taipei
@@ -89,7 +89,7 @@ struct ClaudeUsageTextDecoderTests {
 
     @Test(arguments: [0, 1, 99, 100])
     func acceptsThePercentageRange(_ percent: Int) throws {
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(Self.body(session: "\(percent)% used · resets Aug 25 at 1am (Asia/Taipei)")),
             now: Self.now,
             timeZone: Self.taipei
@@ -183,14 +183,14 @@ struct ClaudeUsageTextDecoderTests {
     @Test func rejectsAMissingSessionLine() {
         let text = "Current week (all models): 7% used · resets Aug 31 at 12pm (Asia/Taipei)"
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
         }
     }
 
     @Test func rejectsAMissingWeeklyLine() {
         let text = "Current session: 42% used · resets Aug 25 at 1am (Asia/Taipei)"
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
         }
     }
 
@@ -199,7 +199,7 @@ struct ClaudeUsageTextDecoderTests {
     @Test func rejectsDuplicateWindows() {
         let text = Self.body() + "\nCurrent session: 91% used · resets Aug 25 at 1am (Asia/Taipei)"
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
         }
     }
 
@@ -208,13 +208,13 @@ struct ClaudeUsageTextDecoderTests {
     @Test func rejectsAnOutOfRangePercentage() {
         let text = Self.body(session: "420% used · resets Aug 25 at 1am (Asia/Taipei)")
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
         }
     }
 
     @Test func rejectsNonJSONOutput() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Data("not json at all".utf8), now: Self.now, timeZone: Self.taipei
             )
         }
@@ -222,7 +222,7 @@ struct ClaudeUsageTextDecoderTests {
 
     @Test func rejectsAnErrorEnvelope() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(Self.body(), isError: true), now: Self.now, timeZone: Self.taipei
             )
         }
@@ -230,7 +230,7 @@ struct ClaudeUsageTextDecoderTests {
 
     @Test func rejectsANonSuccessSubtype() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(Self.body(), subtype: "error_during_execution"),
                 now: Self.now,
                 timeZone: Self.taipei
@@ -240,7 +240,7 @@ struct ClaudeUsageTextDecoderTests {
 
     @Test func rejectsAnEmptyResult() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(""), now: Self.now, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(""), now: Self.now, timeZone: Self.taipei)
         }
     }
 
@@ -253,7 +253,7 @@ struct ClaudeUsageTextDecoderTests {
         ])
 
         do {
-            _ = try ClaudeUsageTextDecoder.decode(data, now: Self.now, timeZone: Self.taipei)
+            _ = try ClaudeUsageDecoder.decode(data, now: Self.now, timeZone: Self.taipei)
             Issue.record("Expected a schema error")
         } catch let error as UsageError {
             #expect(error.remedy?.contains(marker) == false)
@@ -270,7 +270,7 @@ struct ClaudeUsageTextDecoderTests {
         // Two hours past the Aug 25 01:00 reset.
         let later = Self.now.addingTimeInterval(6 * 3_600)
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(Self.envelope(Self.body()), now: later, timeZone: Self.taipei)
+            try ClaudeUsageDecoder.decode(Self.envelope(Self.body()), now: later, timeZone: Self.taipei)
         }
     }
 
@@ -283,7 +283,7 @@ struct ClaudeUsageTextDecoderTests {
         )
 
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(text), now: Self.now, timeZone: Self.taipei
             )
         }
@@ -292,7 +292,7 @@ struct ClaudeUsageTextDecoderTests {
     @Test func reportsTheResetTimeItRejectedOn() throws {
         let later = Self.now.addingTimeInterval(6 * 3_600)
         do {
-            _ = try ClaudeUsageTextDecoder.decode(Self.envelope(Self.body()), now: later, timeZone: Self.taipei)
+            _ = try ClaudeUsageDecoder.decode(Self.envelope(Self.body()), now: later, timeZone: Self.taipei)
             Issue.record("Expected an outdated-reading error")
         } catch let error as UsageError {
             guard case .claudeUsageOutdated(let resetsAt) = error else {
@@ -313,14 +313,14 @@ struct ClaudeUsageTextDecoderTests {
         )!
 
         let justInside = reset.addingTimeInterval(ClaudeUsageTextDecoder.resetGrace - 5)
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(Self.body()), now: justInside, timeZone: Self.taipei
         )
         #expect(snapshot.representativeWindow?.used.usedPercent == 42)
 
         let justOutside = reset.addingTimeInterval(ClaudeUsageTextDecoder.resetGrace + 5)
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(Self.body()), now: justOutside, timeZone: Self.taipei
             )
         }
@@ -335,7 +335,7 @@ struct ClaudeUsageTextDecoderTests {
     /// This is a regression for a real gap state where the line is present without a
     /// reset clause; dates, percentages, and reset times in fixtures remain synthetic.
     @Test func acceptsASessionLineWithNoResetClause() throws {
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(Self.body(session: "0% used")),
             now: Self.now,
             timeZone: Self.taipei
@@ -355,7 +355,7 @@ struct ClaudeUsageTextDecoderTests {
     /// pretending the payload still represents the between-window state.
     @Test func rejectsANonzeroSessionLineWithNoResetClause() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(Self.body(session: "42% used")),
                 now: Self.now,
                 timeZone: Self.taipei
@@ -370,7 +370,7 @@ struct ClaudeUsageTextDecoderTests {
         let muchLater = Self.now.addingTimeInterval(30 * 24 * 3_600)
         let weekly = "26% used · resets \(Self.resetText(muchLater.addingTimeInterval(3_600)))"
 
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(Self.body(session: "0% used", weekly: weekly)),
             now: muchLater,
             timeZone: Self.taipei
@@ -382,7 +382,7 @@ struct ClaudeUsageTextDecoderTests {
     /// rather than a state — the asymmetry with the session line is deliberate.
     @Test func stillRejectsAWeeklyLineWithNoResetClause() {
         #expect(throws: UsageError.self) {
-            try ClaudeUsageTextDecoder.decode(
+            try ClaudeUsageDecoder.decode(
                 Self.envelope(Self.body(weekly: "26% used")),
                 now: Self.now,
                 timeZone: Self.taipei
@@ -400,7 +400,7 @@ struct ClaudeUsageTextDecoderTests {
         Current week (all models): 26% used · resets Aug 31 at 11:59am (Asia/Taipei)
         """
 
-        let snapshot = try ClaudeUsageTextDecoder.decode(
+        let snapshot = try ClaudeUsageDecoder.decode(
             Self.envelope(text), now: Self.now, timeZone: Self.taipei
         )
         #expect(snapshot.representativeWindow?.used.usedPercent == 0)
@@ -414,7 +414,7 @@ struct ClaudeUsageTextDecoderTests {
     @Test func distinguishesAnUnreadableLineFromAMissingOne() {
         func detail(for text: String) -> String? {
             do {
-                _ = try ClaudeUsageTextDecoder.decode(
+                _ = try ClaudeUsageDecoder.decode(
                     Self.envelope(text), now: Self.now, timeZone: Self.taipei
                 )
                 return nil

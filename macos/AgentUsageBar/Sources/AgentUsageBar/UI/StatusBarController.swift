@@ -17,6 +17,8 @@ final class StatusBarController: NSObject {
     private var combinedPopover: NSPopover?
     private var neutralItem: NSStatusItem?
     private var popovers: [ProviderKind: NSPopover] = [:]
+    /// The popovers currently showing the scrolling variant of the panel.
+    private var scrollingPopovers: Set<ObjectIdentifier> = []
     private var appearanceObservation: NSKeyValueObservation?
 
     struct PopoverLayoutDecision: Equatable {
@@ -88,6 +90,38 @@ final class StatusBarController: NSObject {
     var imageLayoutDiagnostics: [(length: CGFloat, imageSize: NSSize?)] {
         let items = combinedItem.map { [$0] } ?? model.presenters.compactMap { providerItems[$0.provider] }
         return items.map { (length: $0.length, imageSize: $0.button?.image?.size) }
+    }
+
+    /// Builds the popover a click would open, without showing it, then folds and
+    /// unfolds one row through the same callback the row's own button uses.
+    ///
+    /// Returns the popover's height at each step. The path from a fold to
+    /// `contentSize` runs through a closure held by the panel, and short of clicking
+    /// there is no other way to prove it is connected.
+    func foldResizeDiagnostics(
+        folding window: UsageWindow,
+        of provider: ProviderKind
+    ) -> (opened: CGFloat, folded: CGFloat, unfolded: CGFloat)? {
+        let presenters = model.menuBarLayout == .combined
+            ? model.enabledPresenters
+            : model.presenters.filter { $0.provider == provider }
+        let item = model.menuBarLayout == .combined ? combinedItem : providerItems[provider]
+        guard let button = item?.button, !presenters.isEmpty else { return nil }
+
+        let popover = makePopover()
+        configurePopover(popover, presenters: presenters, relativeTo: button, onOpenSettings: {})
+        guard let content = popover.contentViewController as? NSHostingController<UsagePopoverView> else {
+            return nil
+        }
+        let opened = popover.contentSize.height
+
+        model.windowDisclosure.toggle(window, provider: provider)
+        content.rootView.onContentHeightChange()
+        let folded = popover.contentSize.height
+
+        model.windowDisclosure.toggle(window, provider: provider)
+        content.rootView.onContentHeightChange()
+        return (opened: opened, folded: folded, unfolded: popover.contentSize.height)
     }
     #endif
 
@@ -435,15 +469,56 @@ final class StatusBarController: NSObject {
         relativeTo button: NSStatusBarButton,
         onOpenSettings: @escaping () -> Void
     ) {
-        let naturalController = NSHostingController(
-            rootView: UsagePopoverView(
+        layoutPopover(
+            popover,
+            presenters: presenters,
+            relativeTo: button,
+            replacingContent: true,
+            onOpenSettings: onOpenSettings
+        )
+    }
+
+    /// Sizes the popover to its content, and decides whether it needs to scroll.
+    ///
+    /// Runs when the popover opens, and again whenever a row inside it is folded or
+    /// unfolded. The second case is why this is not done once: `contentSize` is a fixed
+    /// number, so a panel that changes height after opening would otherwise be clipped
+    /// or left with a gap under the buttons.
+    ///
+    /// On a re-layout the content view is kept unless scrolling has to switch on or
+    /// off. Rebuilding it on every fold would reset whatever the person was pointing at.
+    private func layoutPopover(
+        _ popover: NSPopover,
+        presenters: [ProviderPresenter],
+        relativeTo button: NSStatusBarButton,
+        replacingContent: Bool,
+        onOpenSettings: @escaping () -> Void
+    ) {
+        let makeView = { [weak self, weak popover, weak button] (allowsScrolling: Bool) -> UsagePopoverView in
+            UsagePopoverView(
                 presenters: presenters,
-                language: model.displayLanguage,
-                codexTokenHistoryPeriod: model.codexTokenHistoryPeriod,
-                allowsScrolling: false,
+                language: self?.model.displayLanguage ?? .english,
+                codexTokenHistoryPeriod: self?.model.codexTokenHistoryPeriod ?? .thirtyDays,
+                allowsScrolling: allowsScrolling,
+                disclosure: self?.model.windowDisclosure ?? WindowDisclosureModel(),
+                onContentHeightChange: {
+                    guard let self, let popover, let button else { return }
+                    self.layoutPopover(
+                        popover,
+                        presenters: presenters,
+                        relativeTo: button,
+                        replacingContent: false,
+                        onOpenSettings: onOpenSettings
+                    )
+                },
                 onOpenSettings: onOpenSettings
             )
-        )
+        }
+
+        // Measured on a view built for the purpose rather than on the one being shown:
+        // the shown one may be the scrolling variant, whose height says nothing about
+        // its content, and a fresh one reflects the fold that was just made.
+        let naturalController = NSHostingController(rootView: makeView(false))
         let desired = naturalController.sizeThatFits(
             in: NSSize(width: 320, height: 10_000)
         ).height
@@ -452,18 +527,17 @@ final class StatusBarController: NSObject {
             ?? 700
         let layout = Self.popoverLayout(desiredHeight: desired, availableHeight: available)
 
+        let identifier = ObjectIdentifier(popover)
+        let wasScrolling = scrollingPopovers.contains(identifier)
+        if replacingContent || wasScrolling != layout.usesScrolling {
+            popover.contentViewController = layout.usesScrolling
+                ? NSHostingController(rootView: makeView(true))
+                : naturalController
+        }
         if layout.usesScrolling {
-            popover.contentViewController = NSHostingController(
-                rootView: UsagePopoverView(
-                    presenters: presenters,
-                    language: model.displayLanguage,
-                    codexTokenHistoryPeriod: model.codexTokenHistoryPeriod,
-                    allowsScrolling: true,
-                    onOpenSettings: onOpenSettings
-                )
-            )
+            scrollingPopovers.insert(identifier)
         } else {
-            popover.contentViewController = naturalController
+            scrollingPopovers.remove(identifier)
         }
         popover.contentSize = NSSize(width: 320, height: layout.height)
     }

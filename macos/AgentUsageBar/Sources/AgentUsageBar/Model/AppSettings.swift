@@ -143,6 +143,7 @@ enum SettingsStore {
     private static let codexExecutablePathKey = "\(version).codexExecutablePath"
     private static let codexTokenHistoryDaysKey = "\(version).codexTokenHistoryDays"
     private static let codexTokenRefreshIntervalKey = "\(version).codexTokenRefreshInterval"
+    private static let windowDisclosureKey = "\(version).windowDisclosure"
 
     /// Blank means auto-detect. A GUI app's PATH is not the shell's, so an unusual
     /// install location has to be nameable.
@@ -204,6 +205,23 @@ enum SettingsStore {
         defaults: UserDefaults = .standard
     ) {
         defaults.set(interval.rawValue, forKey: codexTokenRefreshIntervalKey)
+    }
+
+    /// Which usage rows the panel shows folded. Validated on the way in: this is the
+    /// only preference whose keys contain provider-supplied text.
+    static func loadWindowDisclosure(defaults: UserDefaults = .standard) -> WindowDisclosure {
+        WindowDisclosure(storedValue: defaults.dictionary(forKey: windowDisclosureKey))
+    }
+
+    static func saveWindowDisclosure(
+        _ disclosure: WindowDisclosure,
+        defaults: UserDefaults = .standard
+    ) {
+        guard !disclosure.storedValue.isEmpty else {
+            defaults.removeObject(forKey: windowDisclosureKey)
+            return
+        }
+        defaults.set(disclosure.storedValue, forKey: windowDisclosureKey)
     }
 
     static func defaultEnabled(for provider: ProviderKind) -> Bool {

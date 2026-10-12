@@ -17,11 +17,14 @@ import Foundation
 ///
 /// # The honest caveat
 ///
-/// `/usage` answers from Claude Code's local cache when it cannot reach the server —
-/// verified by running it with the network off. So a reading can be older than the
-/// moment it was fetched, and the text carries no as-of time. `ClaudeUsageTextDecoder`
-/// bounds that with the reset time; the residual exposure is staleness within a single
-/// window. This is a real trade against the old path, not a free upgrade.
+/// The prose `/usage` prints comes from Claude Code's local cache when it cannot reach
+/// the server — verified by running it with the network off — and carries no as-of
+/// time. The structured report attached to the same output says so instead, with no
+/// rows, and `ClaudeUsageDecoder` reports that rather than the cached figures.
+///
+/// Where no report is attached, an older CLI for instance, the prose is all there is.
+/// The reset time then bounds how old it can be, and the residual exposure is staleness
+/// within a single window. That remains a real trade against the old path.
 public struct ClaudeUsageProvider: UsageProvider {
     private let locator: ClaudeExecutableLocator
     private let runner: any ClaudeCommandRunning
@@ -51,7 +54,7 @@ public struct ClaudeUsageProvider: UsageProvider {
             throw Self.classify(output: output)
         }
 
-        return try ClaudeUsageTextDecoder.decode(
+        return try ClaudeUsageDecoder.decode(
             output.standardOutput,
             now: now(),
             sourceVersion: ClaudeExecutableLocator.detectedVersion(at: executable)
@@ -65,7 +68,7 @@ public struct ClaudeUsageProvider: UsageProvider {
     /// project paths, or a credential, and a generic message plus the right next step is
     /// worth more to the user than a verbatim dump would be anyway.
     static func classify(output: ClaudeCommandOutput) -> UsageError {
-        let text = (output.standardErrorPrefix + " " + Self.leadingText(of: output.standardOutput))
+        let text = (output.standardErrorPrefix + " " + Self.classificationText(of: output.standardOutput))
             .lowercased()
 
         // Checked before sign-in markers: an old build rejecting `--safe-mode` often
@@ -90,8 +93,21 @@ public struct ClaudeUsageProvider: UsageProvider {
         return .claudeCommandFailed("Claude Code exited with status \(output.exitCode)")
     }
 
-    /// A bounded prefix, for classification only.
-    private static func leadingText(of data: Data) -> String {
-        String(data: data.prefix(2048), encoding: .utf8) ?? ""
+    /// What the CLI said about the failure, bounded, for classification only.
+    ///
+    /// With `--verbose` stdout is an array whose first message lists the run's tools,
+    /// commands and plugins. Reading a prefix of that would miss the outcome, which
+    /// comes last, and could match a marker against a tool's name instead. So when the
+    /// output is that array, only the `result` messages' own text is considered.
+    private static func classificationText(of data: Data) -> String {
+        if let messages = (try? JSONSerialization.jsonObject(with: data)) as? [Any] {
+            let outcome = messages
+                .compactMap { $0 as? [String: Any] }
+                .filter { $0["type"] as? String == "result" }
+                .compactMap { $0["result"] as? String }
+                .joined(separator: " ")
+            return String(outcome.prefix(2048))
+        }
+        return String(data: data.prefix(2048), encoding: .utf8) ?? ""
     }
 }

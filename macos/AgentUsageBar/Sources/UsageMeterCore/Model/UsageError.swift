@@ -31,6 +31,11 @@ public enum UsageError: Error, Sendable, Hashable {
     /// already rolled over. The figure describes a window that has ended, so the current
     /// usage is unknown — and unknown is never drawn as 0%.
     case claudeUsageOutdated(resetsAt: Date)
+    /// Claude Code ran and reported, but its usage report holds no figure from the
+    /// server: it could not reach the usage service, or was not allowed to read the
+    /// plan's usage. The prose beside such a report still prints the last figures the
+    /// CLI knew, so this is reported instead of them.
+    case claudeUsageUnavailable
 
     /// Codex-specific failures stay distinct so the UI can offer the right next step.
     case codexExecutableNotFound
@@ -74,6 +79,7 @@ public enum UsageError: Error, Sendable, Hashable {
             case .claudeCommandFailed: "Claude Code 查詢失敗"
             case .claudeCommandTimedOut: "Claude Code 查詢逾時"
             case .claudeUsageOutdated: "額度資料已跨過重置時間"
+            case .claudeUsageUnavailable: "Claude Code 未取得最新額度"
             case .codexExecutableNotFound: "找不到 Codex CLI"
             case .codexExecutableInvalid: "Codex CLI 路徑不可用"
             case .codexNotLoggedIn: "尚未登入 Codex"
@@ -95,6 +101,7 @@ public enum UsageError: Error, Sendable, Hashable {
         case .claudeCommandFailed: "Claude Code usage query failed"
         case .claudeCommandTimedOut: "Claude Code usage query timed out"
         case .claudeUsageOutdated: "Usage reading is past its reset time"
+        case .claudeUsageUnavailable: "Claude Code has no current usage data"
         case .codexExecutableNotFound: "Codex CLI not found"
         case .codexExecutableInvalid: "Codex CLI path unavailable"
         case .codexNotLoggedIn: "Not signed in to Codex"
@@ -131,6 +138,8 @@ public enum UsageError: Error, Sendable, Hashable {
                 "唯讀的 /usage 查詢未在期限內完成；App 會依退避策略重試。"
             case .claudeUsageOutdated:
                 "Claude Code 回報的是本機快取，而該筆讀數的時間窗已經結束。請確認網路連線後按「重新整理」；若持續發生，在終端機執行一次 `claude`。"
+            case .claudeUsageUnavailable:
+                "Claude Code 這次沒有從伺服器取得額度資料，所以 App 不採用它印出的舊數字。請確認網路連線後按「重新整理」；若持續發生，在終端機執行一次 `claude`。"
             case .codexExecutableNotFound:
                 "請安裝 Codex CLI，或在設定的「資料來源」頁指定 codex 執行檔路徑。"
             case .codexExecutableInvalid(let path):
@@ -163,6 +172,8 @@ public enum UsageError: Error, Sendable, Hashable {
             "The read-only /usage query timed out. The app will retry according to its backoff policy."
         case .claudeUsageOutdated:
             "Claude Code answered from its local cache and that reading's window has already ended. Check your connection and click Refresh; if it persists, run `claude` once in Terminal."
+        case .claudeUsageUnavailable:
+            "Claude Code could not get usage data from the server this time, so the app does not use the older figures it printed. Check your connection and click Refresh; if it persists, run `claude` once in Terminal."
         case .codexExecutableNotFound:
             "Install Codex CLI, or specify the codex executable in Settings > Data Sources."
         case .codexExecutableInvalid(let path):
@@ -183,6 +194,9 @@ public enum UsageError: Error, Sendable, Hashable {
             "The CLI reported is_error for /usage": "CLI 對 /usage 回報 is_error",
             "The CLI did not report subtype=success for /usage": "CLI 未對 /usage 回報 subtype=success",
             "Missing result text": "缺少 result 文字",
+            "Command output has no result message": "指令輸出沒有 result 訊息",
+            "Unreadable usage report": "無法解析用量報告",
+            "The usage report contains no limit rows": "用量報告沒有任何額度列",
             "Codex rate-limit response is not a JSON object": "Codex rate-limit 回應不是 JSON 物件",
             "Missing standard codex rateLimits": "缺少一般 codex rateLimits",
             "Standard codex rateLimits has no decodable primary or secondary window": "一般 codex rateLimits 缺少可解析的 primary／secondary",
@@ -197,6 +211,25 @@ public enum UsageError: Error, Sendable, Hashable {
             "Codex App Server is not running": "Codex App Server 尚未執行",
         ]
         if let translated = exact[detail] { return translated }
+
+        let rowDetails: [(String, String, String)] = [
+            ("Unreadable percentage in the \"", "\" usage row", "」額度列的百分比無法讀取"),
+            ("Unreadable reset time in the \"", "\" usage row", "」額度列的重置時間無法讀取"),
+            ("Missing reset time in the \"", "\" usage row", "」額度列缺少重置時間"),
+        ]
+        for (prefix, suffix, chinese) in rowDetails
+        where detail.hasPrefix(prefix) && detail.hasSuffix(suffix) {
+            return "「" + detail.dropFirst(prefix.count).dropLast(suffix.count) + chinese
+        }
+        if detail.hasPrefix("Found "), detail.hasSuffix(" result messages") {
+            return "找到 " + detail.dropFirst(6).dropLast(16) + " 則 result 訊息"
+        }
+        if detail.hasPrefix("Found "), detail.hasSuffix(" usage reports") {
+            return "找到 " + detail.dropFirst(6).dropLast(14) + " 份用量報告"
+        }
+        if detail.hasPrefix("Found "), detail.hasSuffix("\" usage rows") {
+            return "找到 " + detail.dropFirst(6).dropLast(12).replacingOccurrences(of: " \"", with: " 列「") + "」額度列"
+        }
 
         let replacements: [(String, String)] = [
             ("Missing the \"", "找不到「"),
