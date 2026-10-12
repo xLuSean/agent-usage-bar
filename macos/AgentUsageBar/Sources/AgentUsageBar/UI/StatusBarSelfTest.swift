@@ -381,23 +381,50 @@ enum StatusBarSelfTest {
         // The popover has to follow, in both layouts, or the panel is clipped or left
         // with a gap under the buttons. A render check cannot see this: it measures a
         // view, not a popover.
+        //
+        // The screen height is supplied rather than read. On a short display the
+        // popover is already clamped to the screen and a fold cannot shrink it, so a
+        // check written against whatever display this runs on passes on one machine
+        // and fails on another for reasons that have nothing to do with the wiring.
         for layout in [MenuBarLayout.separate, .combined] {
             model.menuBarLayout = layout
             claude.applyDemoScenario(.healthy)
             codex.applyDemoScenario(.healthy)
-            guard let session = claude.state.snapshot?.windows.first(where: { $0.kind == .session }),
-                  let heights = controller.foldResizeDiagnostics(folding: session, of: .claude) else {
-                check(false, "\(layout.rawValue): could not build a popover to fold a row in")
+            guard let session = claude.state.snapshot?.windows.first(where: { $0.kind == .session }) else {
+                check(false, "\(layout.rawValue): the healthy scenario has no session row to fold")
                 continue
             }
-            check(
-                heights.folded < heights.opened,
-                "\(layout.rawValue): folding a row shrinks the popover (\(Int(heights.opened)) → \(Int(heights.folded)) pt)"
-            )
-            check(
-                heights.unfolded == heights.opened,
-                "\(layout.rawValue): unfolding it restores the height (\(Int(heights.unfolded)) pt)"
-            )
+            for (screen, available) in [("roomy screen", CGFloat(4_000)), ("short screen", CGFloat(300))] {
+                let label = "\(layout.rawValue), \(screen)"
+                guard let heights = controller.foldResizeDiagnostics(
+                    folding: session, of: .claude, availableHeight: available
+                ) else {
+                    check(false, "\(label): could not build a popover to fold a row in")
+                    continue
+                }
+                check(
+                    heights.folded == heights.openedFolded,
+                    "\(label): after a fold the popover is the size it would open at (\(Int(heights.folded)) pt)"
+                )
+                check(
+                    heights.unfolded == heights.opened,
+                    "\(label): unfolding restores the height (\(Int(heights.unfolded)) pt)"
+                )
+                if available > 1_000 {
+                    check(
+                        heights.folded < heights.opened,
+                        "\(label): folding a row shrinks the popover (\(Int(heights.opened)) → \(Int(heights.folded)) pt)"
+                    )
+                } else {
+                    let limit = StatusBarController.popoverLayout(
+                        desiredHeight: 10_000, availableHeight: available
+                    ).height
+                    check(
+                        heights.opened <= limit && heights.folded <= heights.opened,
+                        "\(label): the popover never outgrows the screen (\(Int(heights.opened)) → \(Int(heights.folded)) pt, limit \(Int(limit)) pt)"
+                    )
+                }
+            }
         }
         check(
             model.windowDisclosure.disclosure == WindowDisclosure(),

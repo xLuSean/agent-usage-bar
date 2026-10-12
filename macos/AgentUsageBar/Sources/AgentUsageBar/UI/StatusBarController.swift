@@ -92,36 +92,61 @@ final class StatusBarController: NSObject {
         return items.map { (length: $0.length, imageSize: $0.button?.image?.size) }
     }
 
+    /// Stands in for the screen's height while `foldResizeDiagnostics` runs. Without it
+    /// the check would depend on the display it happens to run on: on a short screen
+    /// the popover is already clamped to the screen, and a fold cannot make it shorter.
+    private var diagnosticAvailableHeight: CGFloat?
+
     /// Builds the popover a click would open, without showing it, then folds and
     /// unfolds one row through the same callback the row's own button uses.
     ///
-    /// Returns the popover's height at each step. The path from a fold to
-    /// `contentSize` runs through a closure held by the panel, and short of clicking
-    /// there is no other way to prove it is connected.
+    /// Returns the popover's height at each step, and the height a popover opened
+    /// while the row is folded would be given. The path from a fold to `contentSize`
+    /// runs through a closure held by the panel, and short of clicking there is no
+    /// other way to prove it is connected.
     func foldResizeDiagnostics(
         folding window: UsageWindow,
-        of provider: ProviderKind
-    ) -> (opened: CGFloat, folded: CGFloat, unfolded: CGFloat)? {
+        of provider: ProviderKind,
+        availableHeight: CGFloat
+    ) -> (opened: CGFloat, folded: CGFloat, openedFolded: CGFloat, unfolded: CGFloat)? {
         let presenters = model.menuBarLayout == .combined
             ? model.enabledPresenters
             : model.presenters.filter { $0.provider == provider }
         let item = model.menuBarLayout == .combined ? combinedItem : providerItems[provider]
         guard let button = item?.button, !presenters.isEmpty else { return nil }
 
+        diagnosticAvailableHeight = availableHeight
         let popover = makePopover()
-        configurePopover(popover, presenters: presenters, relativeTo: button, onOpenSettings: {})
-        guard let content = popover.contentViewController as? NSHostingController<UsagePopoverView> else {
-            return nil
+        let reopened = makePopover()
+        defer {
+            diagnosticAvailableHeight = nil
+            scrollingPopovers.remove(ObjectIdentifier(popover))
+            scrollingPopovers.remove(ObjectIdentifier(reopened))
         }
+
+        // Read again at every step: a fold that moves the panel across the screen's
+        // limit replaces the content view, and with it the callback.
+        func notifyContentHeightChange() -> Bool {
+            guard let content = popover.contentViewController as? NSHostingController<UsagePopoverView> else {
+                return false
+            }
+            content.rootView.onContentHeightChange()
+            return true
+        }
+
+        configurePopover(popover, presenters: presenters, relativeTo: button, onOpenSettings: {})
         let opened = popover.contentSize.height
 
         model.windowDisclosure.toggle(window, provider: provider)
-        content.rootView.onContentHeightChange()
+        let didFold = notifyContentHeightChange()
         let folded = popover.contentSize.height
+        configurePopover(reopened, presenters: presenters, relativeTo: button, onOpenSettings: {})
+        let openedFolded = reopened.contentSize.height
 
         model.windowDisclosure.toggle(window, provider: provider)
-        content.rootView.onContentHeightChange()
-        return (opened: opened, folded: folded, unfolded: popover.contentSize.height)
+        let didUnfold = notifyContentHeightChange()
+        guard didFold, didUnfold else { return nil }
+        return (opened: opened, folded: folded, openedFolded: openedFolded, unfolded: popover.contentSize.height)
     }
     #endif
 
@@ -522,9 +547,14 @@ final class StatusBarController: NSObject {
         let desired = naturalController.sizeThatFits(
             in: NSSize(width: 320, height: 10_000)
         ).height
-        let available = button.window?.screen?.visibleFrame.height
+        let screenHeight = button.window?.screen?.visibleFrame.height
             ?? NSScreen.main?.visibleFrame.height
             ?? 700
+        #if DEBUG
+        let available = diagnosticAvailableHeight ?? screenHeight
+        #else
+        let available = screenHeight
+        #endif
         let layout = Self.popoverLayout(desiredHeight: desired, availableHeight: available)
 
         let identifier = ObjectIdentifier(popover)

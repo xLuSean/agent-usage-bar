@@ -27,7 +27,7 @@
 | Release fixture guard | Xcode target metadata 與 Release binary 都不得含 fixture module／型別／UI 文案 | 合成 render 情境可留在 `#if DEBUG`，但 DMG 不應附帶假資料模式 |
 | bundle sanity | 圖示存在、`LSUIElement` 已設 | 沒設 `LSUIElement` 的選單列 App 啟動後看起來什麼也沒做 |
 | atomic single-instance fixture | 從唯一 bundle ID 同時啟動兩個不建立 provider 的 Debug 副本，確認只有一個持有核心鎖、另一個自行退出 | PID 會循環，也不能代表啟動先後；只有原子的 ownership 能防止兩個隱形 App 同時輪詢 |
-| status bar selftest | 從唯一 bundle ID 的診斷 App 真正建立 `NSStatusItem`，驗證合併位置、目前 Space、popover 捲動決策，以及收合一列後 popover 高度確實跟著改變（分開與合併兩種版面） | 編得過不代表 AppKit 接線符合使用者看到的狀態；production preferences 不得成為測試 fixture |
+| status bar selftest | 從唯一 bundle ID 的診斷 App 真正建立 `NSStatusItem`，驗證合併位置、目前 Space、popover 捲動決策，以及收合一列後 popover 高度確實跟著改變（分開與合併兩種版面，螢幕高度由檢查注入而不是讀取實際螢幕） | 編得過不代表 AppKit 接線符合使用者看到的狀態；production preferences 不得成為測試 fixture |
 | live path smoke | 非主執行緒跑完整 `fetch()`：缺執行檔、成功解碼、讀數過期、結構化報告優先於文字、報告沒有額度列五條路徑，全用 stub 程序 | 這是並行與錯誤路徑驗證，不啟動任何 CLI、不查詢真實帳號 |
 | 子程序執行器測試 | 用系統內建指令與中性 fixture 實際啟動程序，驗證 stdout、非零 exit、stdin、輸出上限、adopt 前取消、抗拒 `SIGTERM`、descendant-held pipe、真實 cwd／`PWD`，以及 child 在查詢目錄內留下的暫存資料夾會隨目錄清掉 | 兩個 provider 都必須對自己建立的精確 root child 有 deadline；每個 instance 也必須從新的空白、本機、`0700` 暫存目錄執行，退出後精確清理，且建立失敗不得退回 `/`。Claude Code 自己的暫存根目錄也指向該目錄，否則每次查詢會在它預設的位置多留一個資料夾。測試 descendant 只用 UUID stop capability 自行退出，不從檔案讀 PID 後送訊號 |
 | UI render check | 強迫 SwiftUI 面板與設定視窗跑真正的排版 | 驗證繁中／英文、合併內容完整展開、深淺色與實際像素輸出；另量出各列全部收合、預設、全部展開三種狀態的高度確實遞增 |
@@ -52,6 +52,8 @@
 ## 最近驗證節點
 
 這裡保留行為與驗證結果，不引用公開前的內部 commit hash。公開基線以可重跑的 `./scripts/verify.sh`、現行 source 與測試作為長期證據。
+
+2026-10-11，收放檢查不再依賴執行當下的螢幕：0.4.110-alpha.1 推送後，GitHub Actions 的 status bar self-test 失敗一項 ——「combined: folding a row shrinks the popover (650 → 650 pt)」。合併版面的面板自然高度約 815 pt，而 CI 的螢幕較矮，popover 一開啟就被壓在螢幕上限 650 pt，收合一列後仍是 650 pt。檢查把「高度沒變」當成收放沒有傳到 popover，但那其實是正確行為；本機螢幕夠高，所以先前幾次完整驗證都沒有遇到。修正後檢查改為注入螢幕高度：兩種版面各測「夠高」（4000 pt）與「很矮」（300 pt）。每一組都要求收合後的高度等於「在收合狀態下重新開啟」會得到的高度，以及展開後回到原本的高度；夠高時另外要求確實變矮，很矮時要求不超過螢幕上限。出貨程式的行為沒有改變，變更只在 `#if DEBUG` 的診斷路徑，已發布的 0.4.110-alpha.1 DMG 不受影響；但它的 tag 所指的 commit 在 CI 上維持失敗。本機完整 `./scripts/verify.sh` 通過 247 項／26 suites、Debug／Release Xcode builds、隔離 AppKit diagnostics（收放檢查 12 項）、UI render、production settings unchanged、packaging／release fixtures、全部靜態護欄及 `git diff --check`。CI 是否轉綠要等這個修正推送後才知道。教訓與 `swift build` 看不到 App 層是同一類：會讀取執行環境的檢查，只在一台機器上通過不算通過。
 
 2026-10-11，面板的時間窗可各自收合：每一列的標題成為按鈕，收合後留下名稱、已用百分比與「目前綁定」標記，只收掉進度條與重設時間那一行，所以收合不隱藏數字。5 小時與 7 天預設展開，模型專屬的週上限預設收合，沒見過的額度種類預設展開；只保存與預設不同的部分，以 provider 加時間窗身分為鍵，跨啟動記住，兩種選單列版面共用。鍵含 provider 提供的標籤，寫入前通過與其他 provider 文字相同的安全檢查，筆數上限 64；損壞或超量的保存值整份視為沒有偏好。popover 的高度原本只在開啟時量一次，收放會讓內容變高或變矮，因此控制器在每次收放後重新量測並調整，只有需要切換捲動退路時才重建內容。新增 9 項核心測試（預設、各列獨立、兩個 provider 不共用、回到預設不留紀錄、往返保存、拒絕損壞值、不安全的鍵、筆數上限）。Render check 量出同一份合成資料在全部收合、預設、全部展開時分別為 227／318／357 pt；原本另有一項「每收一列少掉的高度相同」的斷言，實跑後發現假設錯誤 —— 帶日期的重設時間會換成兩行，那一列本來就比較高 —— 已移除。Status bar self-test 新增一項走真實路徑的檢查：依點擊時的方式建立 popover（不顯示），透過列按鈕使用的同一個 callback 收合再展開一列，讀回 `contentSize`；分開版面 305 → 266 → 305 pt，合併版面 815 → 776 → 815 pt。完整 `./scripts/verify.sh` 通過 247 項／26 suites、Debug／Release Xcode builds、隔離 AppKit diagnostics、provider transition self-test、UI render、production settings unchanged（新偏好鍵已納入比對）、packaging／release fixtures、全部靜態護欄及 `git diff --check`。另人工檢視 `dist/ui.png` 的收合與展開畫面。沒有建立正式候選 DMG、tag、push 或遠端 release。仍需在實際執行的 App 上以滑鼠點擊確認：自動檢查證明了收放會傳到 popover 的尺寸，但沒有涵蓋顯示中的 popover 調整大小時的動畫與位置。
 
