@@ -1,5 +1,5 @@
 // Release identity. This is the single committed source for every build configuration.
 // New installable candidates are authored only by scripts/release.sh.
-MARKETING_VERSION = 0.4.110
-CURRENT_PROJECT_VERSION = 4110
+MARKETING_VERSION = 0.4.111
+CURRENT_PROJECT_VERSION = 4111
 AUB_RELEASE_SUFFIX = alpha.1
