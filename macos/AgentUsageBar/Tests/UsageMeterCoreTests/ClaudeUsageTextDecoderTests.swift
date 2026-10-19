@@ -407,6 +407,125 @@ struct ClaudeUsageTextDecoderTests {
         #expect(snapshot.windows.first { $0.kind == .weeklyAll }?.used.usedPercent == 26)
     }
 
+    // MARK: - A lost sign-in
+
+    /// What `/usage` prints once Claude Code has lost its sign-in: exit 0, `success`,
+    /// no report, and the API-key cost summary where the plan's usage would be. The
+    /// labels follow the observed output; every figure is synthetic.
+    static func costSummary(cost: String = "$0.00") -> String {
+        """
+        Total cost:            \(cost)
+        Total duration (API):  0s
+        Total duration (wall): 0.4s
+        Total code changes:    0 lines added, 0 lines removed
+        Usage:                 0 input, 0 output, 0 cache read, 0 cache write
+        """
+    }
+
+    static let missingSessionLine = UsageError.schemaChanged("Missing the \"Current session\" line")
+
+    /// The fix for the 2026-10-19 report. Read as usage prose this is a "missing
+    /// line", which told the user the format had changed when signing in again was the
+    /// remedy.
+    @Test func reportsALostSignInInsteadOfAFormatChange() {
+        let outputs = [
+            Self.envelope(Self.costSummary()),
+            ClaudeUsageReportDecoderTests.output(report: nil, result: Self.costSummary()),
+            ClaudeUsageReportDecoderTests.output(report: NSNull(), result: Self.costSummary()),
+            // Blank lines around the summary carry nothing either way.
+            Self.envelope("\n" + Self.costSummary() + "\n\n"),
+        ]
+        for output in outputs {
+            #expect(throws: UsageError.claudeNotSignedIn) {
+                try ClaudeUsageDecoder.decode(output, now: Self.now, timeZone: Self.taipei)
+            }
+        }
+    }
+
+    /// The new check must not get between a real reading and the user, even when the
+    /// same text also happens to carry cost-summary lines.
+    @Test func aNormalReadingIsUnaffected() throws {
+        for text in [Self.body(), Self.body() + "\n\n" + Self.costSummary()] {
+            let snapshot = try ClaudeUsageDecoder.decode(
+                Self.envelope(text), now: Self.now, timeZone: Self.taipei
+            )
+            #expect(snapshot.windows.map(\.kind) == [.session, .weeklyAll])
+            #expect(snapshot.representativeWindow?.used.usedPercent == 42)
+        }
+    }
+
+    /// Only the exact observed shape means "signed out". Anything near it is text this
+    /// build has not seen, and stays a format change rather than a guess.
+    @Test(arguments: [
+        // An extra line after the summary.
+        ClaudeUsageTextDecoderTests.costSummary() + "\nSomething new: 1",
+        // An unfamiliar line before it.
+        "A notice this build has not seen\n" + ClaudeUsageTextDecoderTests.costSummary(),
+        // The per-model form, never seen from `/usage`.
+        ClaudeUsageTextDecoderTests.costSummary().replacingOccurrences(
+            of: "Usage:                 0 input, 0 output, 0 cache read, 0 cache write",
+            with: "Usage by model:\n    example-model:  0 input, 0 output, 0 cache read, 0 cache write"
+        ),
+        // One line short.
+        ClaudeUsageTextDecoderTests.costSummary().replacingOccurrences(
+            of: "Total code changes:    0 lines added, 0 lines removed\n", with: ""
+        ),
+        // The right lines in a different order.
+        ClaudeUsageTextDecoderTests.costSummary()
+            .split(separator: "\n").reversed().joined(separator: "\n"),
+    ])
+    func aSummaryThatIsNotTheObservedShapeIsStillAFormatChange(_ text: String) {
+        #expect(throws: Self.missingSessionLine) {
+            try ClaudeUsageDecoder.decode(Self.envelope(text), now: Self.now, timeZone: Self.taipei)
+        }
+    }
+
+    /// A report means the server answered, so the sign-in was working. The summary
+    /// beside one is not read as a sign-in problem, and the report's own verdict wins.
+    @Test func aSummaryBesideAReportIsNotASignInProblem() {
+        #expect(throws: UsageError.claudeUsageUnavailable) {
+            try ClaudeUsageDecoder.decode(
+                ClaudeUsageReportDecoderTests.output(
+                    report: ClaudeUsageReportDecoderTests.report(limits: NSNull()),
+                    result: Self.costSummary()
+                ),
+                now: Self.now,
+                timeZone: Self.taipei
+            )
+        }
+        // Rows without the session meter send the decoder to the prose, which is then
+        // read strictly as usage prose.
+        #expect(throws: Self.missingSessionLine) {
+            try ClaudeUsageDecoder.decode(
+                ClaudeUsageReportDecoderTests.output(
+                    report: ClaudeUsageReportDecoderTests.report(limits: [
+                        ClaudeUsageReportDecoderTests.weekly, ClaudeUsageReportDecoderTests.scoped,
+                    ]),
+                    result: Self.costSummary()
+                ),
+                now: Self.now,
+                timeZone: Self.taipei
+            )
+        }
+    }
+
+    /// The summary's figures are the user's spend. None of them reaches the error.
+    @Test func aLostSignInQuotesNothingFromTheSummary() throws {
+        let marker = "987.6543-secret-marker"
+        do {
+            _ = try ClaudeUsageDecoder.decode(
+                Self.envelope(Self.costSummary(cost: marker)), now: Self.now, timeZone: Self.taipei
+            )
+            Issue.record("Expected claudeNotSignedIn")
+        } catch let error as UsageError {
+            #expect(error == .claudeNotSignedIn)
+            for locale in [Locale(identifier: "en_US"), Locale(identifier: "zh_Hant_TW")] {
+                #expect(!error.shortDescription(locale: locale).contains(marker))
+                #expect(error.remedy(locale: locale)?.contains(marker) == false)
+            }
+        }
+    }
+
     // MARK: - Diagnostics
 
     /// "Absent" and "present but unreadable" point at different problems. Conflating

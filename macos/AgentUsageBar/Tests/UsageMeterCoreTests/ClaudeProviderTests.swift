@@ -263,6 +263,33 @@ struct ClaudeProviderTests {
         }
     }
 
+    /// A lost sign-in does not always exit nonzero. Claude Code can exit 0 with
+    /// `success` and print its cost summary in place of the plan's usage; that still has
+    /// to reach the user as "sign in again", with the command to do it.
+    @Test func surfacesALostSignInThatStillExitsZero() async {
+        let runner = RecordingRunner(
+            result: .success(
+                ClaudeCommandOutput(
+                    exitCode: 0,
+                    standardOutput: ClaudeUsageReportDecoderTests.output(
+                        report: nil,
+                        result: ClaudeUsageTextDecoderTests.costSummary()
+                    )
+                )
+            )
+        )
+        let provider = ClaudeUsageProvider(locator: Self.locator(), runner: runner, now: { Self.now })
+        do {
+            _ = try await provider.fetch()
+            Issue.record("Expected claudeNotSignedIn")
+        } catch let error as UsageError {
+            #expect(error == .claudeNotSignedIn)
+            #expect(ClaudeSignInRecovery.command(for: error) == "claude")
+        } catch {
+            Issue.record("Expected a UsageError, got \(error)")
+        }
+    }
+
     @Test func propagatesATimeout() async {
         let runner = RecordingRunner(result: .failure(UsageError.claudeCommandTimedOut))
         let provider = ClaudeUsageProvider(locator: Self.locator(), runner: runner, now: { Self.now })

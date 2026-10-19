@@ -61,6 +61,46 @@ public enum ClaudeUsageTextDecoder {
         return [session, weekly]
     }
 
+    // MARK: - The signed-out shape
+
+    /// Whether the text is the cost summary Claude Code prints in place of the plan's
+    /// usage, and nothing else.
+    ///
+    /// When Claude Code has lost its claude.ai sign-in, `/usage` still exits 0 and the
+    /// result still says `success`, but there is no plan to report on. What comes back
+    /// is the API-key summary, five lines with these labels and no `Current session`
+    /// or `Current week` line at all. Observed 2026-10-19 against Claude Code 2.1.287,
+    /// whose own log said at the same moment that it had no usable OAuth, WIF, or API
+    /// key. Read as usage prose, that text reports a "missing line", and the user was
+    /// told the format had changed when the remedy was to sign in again.
+    ///
+    /// The match is deliberately narrow: exactly these labels, in this order, with no
+    /// other non-empty line. A summary with an extra or unfamiliar line is not this
+    /// shape and stays a schema change. Only the labels are compared; the figures after
+    /// them are never parsed, kept, or quoted.
+    static func isSignedOutCostSummary(_ result: String) -> Bool {
+        let lines = trimmedLines(of: result).filter { !$0.isEmpty }
+        return lines.count == costSummaryLabels.count
+            && zip(lines, costSummaryLabels).allSatisfy { $0.hasPrefix($1) }
+    }
+
+    /// `Usage:` is the form printed when the run made no model calls, and `/usage`
+    /// makes none. The per-model form, `Usage by model:` followed by one line per
+    /// model, has not been seen from `/usage` and is not accepted.
+    private static let costSummaryLabels = [
+        "Total cost:",
+        "Total duration (API):",
+        "Total duration (wall):",
+        "Total code changes:",
+        "Usage:",
+    ]
+
+    private static func trimmedLines(of result: String) -> [String] {
+        result
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
     // MARK: - Line parsing
 
     /// Computed rather than stored: `Regex` is not `Sendable`, so a `static let` would
@@ -101,9 +141,7 @@ public enum ClaudeUsageTextDecoder {
         timeZone: TimeZone,
         now: Date
     ) throws -> UsageWindow {
-        let lines = result
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let lines = trimmedLines(of: result)
         let matches = lines.compactMap { $0.wholeMatch(of: regex) }
 
         guard let match = matches.first else {

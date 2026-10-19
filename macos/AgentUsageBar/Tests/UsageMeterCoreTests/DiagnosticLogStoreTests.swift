@@ -116,6 +116,35 @@ struct DiagnosticLogStoreTests {
         }
     }
 
+    @Test("a lost sign-in that still exits 0 is logged as a sign-in problem, not a format change")
+    func recordsALostSignInFromTheCostSummary() throws {
+        try withStore { store, defaults in
+            let marker = "987.6543-secret-marker"
+            let output = ClaudeUsageTextDecoderTests.envelope(
+                ClaudeUsageTextDecoderTests.costSummary(cost: marker)
+            )
+            let error: UsageError
+            do {
+                _ = try ClaudeUsageDecoder.decode(output, now: Date(timeIntervalSince1970: 1_800_000_000))
+                Issue.record("Expected claudeNotSignedIn")
+                return
+            } catch let decoded as UsageError {
+                error = decoded
+            }
+
+            let entries = store.append(provider: .claude, error: error, now: Date(timeIntervalSince1970: 1_800_000_000))
+            #expect(entries[0].kind == .claudeNotSignedIn)
+            #expect(entries[0].detail == .categorySummary)
+            #expect(entries[0].detailMessage(locale: Locale(identifier: "en_US")) ==
+                    "Claude Code reported that no usable sign-in state was available.")
+            #expect(entries[0].copyText(locale: Locale(identifier: "en_US")).contains(marker) == false)
+            let persisted = defaults.data(forKey: "v1.diagnosticLog")
+            let persistedText = persisted.flatMap { String(data: $0, encoding: .utf8) }
+            #expect(persistedText?.contains(marker) == false)
+            #expect(persistedText?.contains("Total cost") == false)
+        }
+    }
+
     @Test("dynamic provider values are reduced to a fixed diagnostic detail")
     func stripsDynamicSchemaValues() {
         withStore { store, defaults in

@@ -33,20 +33,24 @@ import Foundation
 /// it does not document. That is a far tighter bound than the prose offers, not a
 /// timestamp.
 ///
-/// So three cases are kept apart:
+/// So these cases are kept apart:
 ///
 /// | The document has | This build |
 /// |---|---|
 /// | no report | reads the prose: an older CLI, or a sign-in the report is not offered for |
+/// | no report, and prose that is only the cost summary | fails with `claudeNotSignedIn` |
 /// | a report with no rows | fails with `claudeUsageUnavailable`; the prose is **not** consulted |
 /// | a report with rows | reads the rows |
 ///
-/// The middle case is the point. Falling back to the prose there would turn "the lookup
+/// The third case is the point. Falling back to the prose there would turn "the lookup
 /// failed" back into a confident number, which is the exact failure the report exists
 /// to prevent.
 ///
-/// The report is documented as experimental, so its absence is never an error and the
-/// two rows this app depends on are read strictly. See `ClaudeUsageReportDecoder`.
+/// The second case is a lost sign-in that still exits 0 with `success`. See
+/// `ClaudeUsageTextDecoder.isSignedOutCostSummary` for the exact shape accepted.
+///
+/// The report is documented as experimental, so its absence alone is never an error and
+/// the two rows this app depends on are read strictly. See `ClaudeUsageReportDecoder`.
 public enum ClaudeUsageDecoder {
 
     public static func decode(
@@ -70,6 +74,15 @@ public enum ClaudeUsageDecoder {
         if let rows = try output.reportRows(),
            let reported = try ClaudeUsageReportDecoder.windows(from: rows, now: now) {
             windows = reported
+        } else if output.report == nil,
+                  let text = output.result["result"] as? String,
+                  ClaudeUsageTextDecoder.isSignedOutCostSummary(text) {
+            // Exit 0 and `success`, yet no plan to report on: Claude Code has lost its
+            // sign-in and printed the API-key cost summary instead. Read as usage prose
+            // that is a "missing line", and the user would be sent to look for a format
+            // change instead of signing in. Only checked when no report is attached; a
+            // report means the server answered, so the sign-in was working.
+            throw UsageError.claudeNotSignedIn
         } else {
             // Either no report was attached, or it has rows but not both meters this
             // app is built on. In the second case the server did answer, so the prose
