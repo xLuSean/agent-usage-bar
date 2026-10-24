@@ -9,7 +9,7 @@ macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面�
 > 兩邊的額度都由本機 CLI 提供：Claude 執行 `claude -p "/usage"`，Codex 使用 App Server 唯讀介面。Claude 的百分比包在為人閱讀的文字裡而不是欄位裡，格式改變時 App 會顯示「未知」而不是猜一個數字。
 
 > [!NOTE]
-> **Claude 已知問題：** 少數情況下，背景 `/usage` 查詢會持續顯示「回應格式已變更」，直到使用者在 Terminal 手動啟動一次 `claude`。遇到時請啟動 Claude Code、完成可能出現的登入提示，再回到 App 按「重新整理」。App 不會代替你登入或修復憑證；詳細限制見下方「Claude」說明。
+> **Claude 已知問題：** 少數情況下，背景 `/usage` 查詢會持續顯示「回應格式已改變」，直到使用者在 Terminal 手動啟動一次 `claude`。遇到時請啟動 Claude Code、完成可能出現的登入提示，再回到 App 按「重新整理」。App 不會代替你登入或修復憑證；詳細限制見下方「Claude」說明。
 
 本專案與 Anthropic、OpenAI 均無隸屬關係，也未獲其背書。所有圖示為原創設計，未使用任何官方標誌。
 
@@ -130,7 +130,7 @@ claude --safe-mode --no-session-persistence -p "/usage" --output-format json --v
 
 #### 已知問題：可能需要先啟動一次 Claude Code
 
-實機曾出現背景 `/usage` 查詢連續回傳 App 無法辨識的內容，畫面因此顯示「回應格式已變更」並保留上一筆讀數；在 Terminal 手動啟動一次互動式 `claude` 後，再按「重新整理」即恢復。這可能與 Claude Code 尚未完成登入、續期或本機狀態初始化有關，但目前只有現象與 workaround，沒有官方文件足以確認根因。
+實機曾出現背景 `/usage` 查詢連續回傳 App 無法辨識的內容，畫面因此顯示「回應格式已改變」並保留上一筆讀數；在 Terminal 手動啟動一次互動式 `claude` 後，再按「重新整理」即恢復。這可能與 Claude Code 尚未完成登入、續期或本機狀態初始化有關，但目前只有現象與 workaround，沒有官方文件足以確認根因。
 
 遇到時請：
 
