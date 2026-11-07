@@ -151,7 +151,7 @@ App 本身也有單一執行個體邊界。`AppInstanceCoordinator` 在使用者
 
 落地的內容是百分比、時間窗、時間戳、Codex 正規化後的累積／最高單日／每日 Token，以及詳情面板已顯示的 Credits／plan／來源版本等非敏感欄位。Provider 提供的顯示文字在 live decoder 先限制為每欄最多 512 UTF-8 bytes，拒絕控制字元與會改變閱讀方向的格式字元；語意用的 `limitId` 另採 128-byte ASCII 識別字規則。App 不讀 Claude credential；Codex 登入 token 完全不離開 App Server。示範用的 fixture 讀數也不會被保存，否則重開之後會看到合成資料裝成真實讀數。
 
-查詢失敗另由 `DiagnosticLogStore` 保存一份有界紀錄。資料包含 App 產生的 UUID、發生時間、`ProviderKind`、封閉的 `DiagnosticErrorKind`，以及可選的封閉 `DiagnosticErrorDetail`。Detail 只把已知錯誤形狀縮減成 App 自己定義的固定原因代碼；無法辨識的 associated string 一律成為 `unrecognizedResponse`，不保存來源文字。設定頁可展開每筆紀錄，依目前 App 語言從這些封閉值產生完整說明並複製。原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑及 provider metadata 都不能進入紀錄或複製文字。舊版沒有 detail 的紀錄仍可解碼，畫面會明示當時未保存更多細節。預設保留 5 天，使用者可選 3／5／7 天並隨時清除；改期限、啟動與新增時都會 prune，固定最多 200 筆，持久化 JSON 在解碼前另限制為 64 KiB，超限即刪除並視為沒有紀錄。只有通過 configuration-generation guard 的正式 fetch failure 記一筆，pacing skip、舊設定的晚到結果及 malformed Codex advisory push 都不記錄。
+查詢失敗另由 `DiagnosticLogStore` 保存一份有界紀錄。資料包含 App 產生的 UUID、發生時間、`ProviderKind`、封閉的 `DiagnosticErrorKind`，以及可選的封閉 `DiagnosticErrorDetail`。Codex 查詢另可保存唯讀方法、背景程序啟動時間與沿用狀態、RPC 與 HTTP 數字代碼、已辨識的原因，及同一種查詢後來恢復的時間與程序是否相同。Detail 只把已知錯誤形狀縮減成 App 自己定義的固定原因代碼；無法辨識的 associated string 一律成為 `unrecognizedResponse`，不保存來源文字。設定頁可展開每筆紀錄，依目前 App 語言從這些封閉值產生完整說明並複製。原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑及 provider metadata 都不能進入紀錄或複製文字。舊版沒有 detail 的紀錄仍可解碼，畫面會明示當時未保存更多細節。預設保留 5 天，使用者可選 3／5／7 天並隨時清除；改期限、啟動與新增時都會 prune，固定最多 200 筆，持久化 JSON 在解碼前另限制為 64 KiB，超限即刪除並視為沒有紀錄。只有通過 configuration-generation guard 的正式 fetch failure 記一筆，pacing skip、舊設定的晚到結果及 malformed Codex advisory push 都不記錄。
 
 磁碟上的 JSON 是另一個輸入邊界，不能因為它曾由 App 寫出就永遠信任。保存與讀回都限制單一 snapshot 最多 64 KiB，並重新驗證所有 provider metadata；讀回時還會確認百分比有限且位於 `0...100`、storage key 與 snapshot provider 一致、來源屬於該 provider、不是 fixture、至少有一個時間窗，而且 `fetchedAt` 不在未來、所有有 reset 的時間窗仍未跨過 60 秒寬限。Codex Token 統計另要求總量非負、每日最多 400 筆、日期為有效且嚴格遞增的 `yyyy-MM-dd`、每日數字非負。任一條失敗就當作沒有保存讀數並照常查詢。現行 `.claudeCodeCLI` 快照還必須各有一個 session 與 weekly window，session 缺 reset 只允許 `0%`，weekly 一律要有 reset，與 live decoder 的 fail-closed 規則相同；額外的未知 window kind 可以保留，但仍受文字與 snapshot 大小上限約束。Codex 的 reset 仍依 App Server schema 維持 optional，不套用 Claude 規則。舊 Claude `usageEndpoint`／`messagesFallback` 來源仍可解碼與短暫還原，保留升級相容性，但目前 provider 不會再產生它們。
 
@@ -190,7 +190,9 @@ Decoder 可以接受只有 primary 的 sparse 通知；`CodexRateLimitUpdatePoli
 
 使用者切換 Codex CLI 路徑、停用 Codex 或結束 App 時會呼叫 `stop()`。停止只持有 `Process` 建立的精確 instance，不掃描或終止 Codex Desktop、Codex CLI 的其他程序。意外退出或 request timeout 都會讓 owned connection 失效；timeout request 保留精確錯誤，其他 pending request 以 connection unavailable 結束，下次 fetch 啟動新程序並重新 handshake。停止先送 `SIGTERM`，短暫 grace 後仍在執行才對該精確 root PID 送 `SIGKILL`；舊程序在觀察到 exit 前仍由 client 持有，不會因重試遺失 ownership。App 結束時先凍結排程、取消並等待 provider fetch，再等 Foundation 確認所有 owned Codex root 已退出，最後才回覆 AppKit 可以離開。
 
-Codex JSON-RPC 的 `error.message` 是不可信的 provider 診斷，只能用來分類「未登入／版本不相容／一般失敗」。介面只顯示 App 自己寫的固定訊息與數字 error code，不顯示、保存或記錄原始 message。
+Codex JSON-RPC 解析器分開保存已辨識的原因與回覆中明確出現的錯誤代碼。程序退出資訊由 `Process` 提供，保存數字狀態及是否遭訊號終止。每個查詢分別帶回當次使用的背景程序資訊。Presenter 確認設定版本仍有效才寫入失敗紀錄，或為上次失敗補上恢復資訊。成功查詢不新增紀錄，但會將清除過期紀錄後的結果同步到設定畫面。
+
+切換 Codex 執行檔時會清除舊來源的記憶體及磁碟快照。已排隊的通知在套用前也須核對來源。兩條查詢排程各自持有計時器，額度的 `RetryBackoff` 保存剩餘等待時間，Token 則從本次執行期間最近的嘗試時間計算間隔，重新啟動時才以儲存的成功時間為準。
 
 ## 11. AppKit 視窗與選單列邊界
 

@@ -383,19 +383,23 @@ public struct DiagnosticLogEntry: Codable, Identifiable, Sendable, Hashable {
     public let provider: ProviderKind
     public let kind: DiagnosticErrorKind
     public let detail: DiagnosticErrorDetail?
+    public let codexQuery: CodexQueryDiagnostic?
+    fileprivate var recovery: CodexQueryRecovery?
 
     public init(
         id: UUID = UUID(),
         occurredAt: Date,
         provider: ProviderKind,
         kind: DiagnosticErrorKind,
-        detail: DiagnosticErrorDetail? = nil
+        detail: DiagnosticErrorDetail? = nil,
+        codexQuery: CodexQueryDiagnostic? = nil
     ) {
         self.id = id
         self.occurredAt = occurredAt
         self.provider = provider
         self.kind = kind
         self.detail = detail
+        self.codexQuery = provider == .codex ? codexQuery : nil
     }
 
     public func detailMessage(locale: Locale) -> String {
@@ -404,7 +408,10 @@ public struct DiagnosticLogEntry: Codable, Identifiable, Sendable, Hashable {
                 "這筆舊版紀錄沒有保存更多診斷細節。" :
                 "This older log entry did not save additional diagnostic detail."
         }
-        return detail.displayName(kind: kind, locale: locale)
+        let description = detail.displayName(kind: kind, locale: locale)
+        let message = codexQuery?.message(fallback: description, locale: locale) ?? description
+        guard let recovery else { return message }
+        return message + "\n" + recovery.message(locale: locale)
     }
 
     public func copyText(locale: Locale) -> String {
@@ -422,10 +429,31 @@ public struct DiagnosticLogEntry: Codable, Identifiable, Sendable, Hashable {
     }
 }
 
+private struct CodexQueryRecovery: Codable, Sendable, Hashable {
+    let at: Date
+    let sameProcess: Bool?
+
+    func message(locale: Locale) -> String {
+        let time = at.formatted(Date.FormatStyle(date: .numeric, time: .standard, locale: locale))
+        if TimeFormatting.usesTraditionalChinese(locale) {
+            switch sameProcess {
+            case true: return "\(time) 沿用同一個背景程序，重試成功。"
+            case false: return "\(time) 已換用另一個背景程序，重試成功。"
+            default: return "\(time) 重試成功。"
+            }
+        }
+        switch sameProcess {
+        case true: return "Retry succeeded at \(time) using the same background process."
+        case false: return "Retry succeeded at \(time) using a different background process."
+        default: return "Retry succeeded at \(time)."
+        }
+    }
+}
+
 /// Persists a bounded, privacy-safe history of failed usage queries.
 ///
-/// This is not a raw diagnostic log. It accepts `UsageError` only at append time and
-/// immediately reduces it to `DiagnosticErrorKind`, discarding every associated value.
+/// Free-form error details are reduced to closed categories. Codex query context
+/// contains only app-owned process facts, allow-listed values and numeric codes.
 public struct DiagnosticLogStore {
     public static let maximumEntries = 200
     static let maximumStoredBytes = 65_536
@@ -482,6 +510,7 @@ public struct DiagnosticLogStore {
     public func append(
         provider: ProviderKind,
         error: UsageError,
+        codexQuery: CodexQueryDiagnostic? = nil,
         now: Date = Date()
     ) -> [DiagnosticLogEntry] {
         var entries = load(now: now)
@@ -490,31 +519,45 @@ public struct DiagnosticLogStore {
                 occurredAt: now,
                 provider: provider,
                 kind: DiagnosticErrorKind(error),
-                detail: DiagnosticErrorDetail(provider: provider, error: error)
+                detail: DiagnosticErrorDetail(provider: provider, error: error),
+                codexQuery: codexQuery
             ),
             at: 0
         )
         if entries.count > Self.maximumEntries {
             entries.removeLast(entries.count - Self.maximumEntries)
         }
-        persist(entries)
-        return entries
+        return persist(entries)
+    }
+
+    /// Annotate only the latest failure of the same operation, once, including after relaunch.
+    /// Returns the retained history even when the only change is expiry.
+    public func recordRecovery(for query: CodexQueryDiagnostic, now: Date = Date()) -> [DiagnosticLogEntry] {
+        var entries = load(now: now)
+        guard let index = entries.firstIndex(where: { $0.codexQuery?.method == query.method }),
+              entries[index].recovery == nil else { return entries }
+        let previous = entries[index].codexQuery?.process
+        let sameProcess = previous.flatMap { old in query.process.map { old.id == $0.id } }
+        entries[index].recovery = CodexQueryRecovery(at: now, sameProcess: sameProcess)
+        return persist(entries)
     }
 
     public func clear() {
         defaults.removeObject(forKey: Self.entriesKey)
     }
 
-    private func persist(_ entries: [DiagnosticLogEntry]) {
-        guard !entries.isEmpty else {
-            defaults.removeObject(forKey: Self.entriesKey)
-            return
+    @discardableResult
+    private func persist(_ entries: [DiagnosticLogEntry]) -> [DiagnosticLogEntry] {
+        var retained = entries
+        while !retained.isEmpty {
+            guard let data = try? JSONEncoder().encode(retained) else { return [] }
+            if data.count <= Self.maximumStoredBytes {
+                defaults.set(data, forKey: Self.entriesKey)
+                return retained
+            }
+            retained.removeLast()
         }
-        guard let data = try? JSONEncoder().encode(entries) else { return }
-        guard data.count <= Self.maximumStoredBytes else {
-            defaults.removeObject(forKey: Self.entriesKey)
-            return
-        }
-        defaults.set(data, forKey: Self.entriesKey)
+        defaults.removeObject(forKey: Self.entriesKey)
+        return []
     }
 }

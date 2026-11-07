@@ -32,23 +32,30 @@ public struct CodexUsageProvider: UsageProvider {
     public func fetchRateLimits(
         preserving accountUsage: CodexAccountUsage?
     ) async throws -> UsageSnapshot {
-        let rateLimitResponse = try await client.readRateLimits(
-            configuredExecutablePath: configuredExecutablePath
-        )
-        return try CodexRateLimitDecoder.decode(
-            rateLimitResponse.payload,
-            fetchedAt: Date(),
-            serverUserAgent: rateLimitResponse.serverUserAgent,
-            accountUsage: accountUsage
-        )
+        try await CodexQueryFailure.withOriginalError { try await quotaReading(preserving: accountUsage).snapshot }
+    }
+
+    public func quotaReading(
+        preserving accountUsage: CodexAccountUsage?
+    ) async throws -> (snapshot: UsageSnapshot, query: CodexQueryDiagnostic?) {
+        let rateLimitResponse = try await client.readWithDiagnostics(.quota, configuredExecutablePath: configuredExecutablePath)
+        let snapshot = try rateLimitResponse.decode {
+            try CodexRateLimitDecoder.decode(
+                $0, fetchedAt: Date(), serverUserAgent: rateLimitResponse.serverUserAgent, accountUsage: accountUsage
+            )
+        }
+        return (snapshot, rateLimitResponse.diagnostic)
     }
 
     /// Reads only Codex's account token statistics. The caller owns merge and pacing so
     /// a failure cannot demote a valid quota snapshot.
     public func fetchAccountUsage(fetchedAt: Date = Date()) async throws -> CodexAccountUsage {
-        let response = try await client.readAccountUsage(
-            configuredExecutablePath: configuredExecutablePath
-        )
-        return try CodexAccountUsageDecoder.decode(response.payload, fetchedAt: fetchedAt)
+        try await CodexQueryFailure.withOriginalError { try await tokenReading(fetchedAt: fetchedAt).usage }
+    }
+
+    public func tokenReading(fetchedAt: Date) async throws -> (usage: CodexAccountUsage, query: CodexQueryDiagnostic?) {
+        let response = try await client.readWithDiagnostics(.tokenUsage, configuredExecutablePath: configuredExecutablePath)
+        let usage = try response.decode { try CodexAccountUsageDecoder.decode($0, fetchedAt: fetchedAt) }
+        return (usage, response.diagnostic)
     }
 }

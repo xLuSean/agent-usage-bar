@@ -103,14 +103,23 @@ final class AppModel {
                 let path = self?.codexExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return path.isEmpty ? nil : path
             }
-            presenter.onDiagnosticError = { [weak self, provider = presenter.provider] error in
+            presenter.onDiagnosticError = { [weak self, provider = presenter.provider] error, codexQuery in
                 guard let self else { return }
                 self.diagnosticEntries = self.diagnosticLogStore.append(
                     provider: provider,
-                    error: error
+                    error: error,
+                    codexQuery: codexQuery
                 )
             }
+            presenter.onCodexQuerySuccess = { [weak self] query in
+                self?.recordCodexSuccess(query)
+            }
         }
+    }
+
+    func recordCodexSuccess(_ query: CodexQueryDiagnostic, now: Date = Date()) {
+        let retained = diagnosticLogStore.recordRecovery(for: query, now: now)
+        if diagnosticEntries != retained { diagnosticEntries = retained }
     }
 
     func clearDiagnosticLog() {
@@ -131,9 +140,10 @@ final class AppModel {
         let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
         guard normalized != codexExecutablePath else { return }
         codexExecutablePath = normalized
+        let codex = presenter(for: .codex)
+        let generation = codex?.providerConfigurationChanged(refreshImmediately: false)
         SettingsStore.saveCodexExecutablePath(normalized)
-        guard let codex = presenter(for: .codex) else { return }
-        let generation = codex.providerConfigurationChanged(refreshImmediately: false)
+        guard let codex, let generation else { return }
         Task {
             guard codex.isCurrentConfiguration(generation) else { return }
             await CodexAppServerClient.shared.stop()

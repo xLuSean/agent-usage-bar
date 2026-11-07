@@ -82,7 +82,7 @@ The interface can switch between **Traditional Chinese and English** in Settings
 
 The app can also **launch at login**.
 
-Settings → Diagnostic Logs shows the time and type of recent query failures. Expanding an entry reveals a complete app-generated explanation that can be copied. It never stores raw responses, credentials, executable paths, or arbitrary provider-supplied text, and it is capped at the latest 200 entries.
+Expand or copy a failure in Settings → Diagnostic Logs to see its details. Codex entries identify the affected query, reported error codes, any recognized cause, and whether the query reused a background process. When that query succeeds again, its latest failure records the recovery time and whether the process changed. It never stores raw responses, credentials, executable paths, or arbitrary provider-supplied text, and it is capped at the latest 200 entries.
 
 ## Installation
 

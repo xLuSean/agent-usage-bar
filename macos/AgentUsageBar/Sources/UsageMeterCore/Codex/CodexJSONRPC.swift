@@ -16,7 +16,7 @@ enum CodexJSONNumber {
     }
 }
 
-enum CodexJSONRPCMethod: String, Sendable {
+enum CodexJSONRPCMethod: String, CaseIterable, Codable, Sendable {
     case initialize
     case rateLimitsRead = "account/rateLimits/read"
     case accountUsageRead = "account/usage/read"
@@ -55,7 +55,7 @@ enum CodexJSONRPC {
 
 enum CodexJSONRPCInbound: Sendable, Hashable {
     case result(id: Int, payload: Data)
-    case failure(id: Int, code: Int, message: String)
+    case failure(id: Int, rejection: CodexRPCRejection)
     case notification(method: String, payload: Data)
     case ignored
 }
@@ -74,7 +74,9 @@ enum CodexJSONRPCParser {
             if let error = object["error"] as? [String: Any],
                let code = CodexJSONNumber.exactInteger(error["code"]),
                let message = error["message"] as? String {
-                return .failure(id: id, code: code, message: message)
+                return .failure(id: id, rejection: CodexRPCRejection(
+                    code: code, message: message, data: error["data"] as? [String: Any]
+                ))
             }
             return .ignored
         }

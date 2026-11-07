@@ -79,10 +79,12 @@ JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精�
 合併規則是：
 
 - 只更新 notification 實際提供且 window identity 相符的欄位。
+- 部分時間窗更新會沿用已知的期間長度，以及仍有效的重置時間。已到期或與新期間長度不符的重置時間會捨棄。
 - 缺少或 `null` 的 optional metadata 不會清掉已知的 weekly、Credits、plan 或來源版本。
 - notification 不含帳號 Token 統計，因此會保留上次完整 `account/usage/read` 的正規化結果。
 - 保留原本的 display-state case、完整查詢的 `fetchedAt`、失敗 backoff 與 10 分鐘保險查詢。
 - 沒有可信 base snapshot，或 limit identity 不相容時，忽略局部 notification。
+- 收到排隊中的通知時，先確認它來自目前設定的 Codex 執行檔。
 
 因此推播能讓畫面提早反映變化，但不能把自己冒充成一次完整、成功的新查詢。下一次完整 read 仍負責校正整份 snapshot。
 
@@ -93,19 +95,25 @@ JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精�
 - 單一非 JSON 或不相關訊息會被隔離，不破壞後續合法訊息。
 - stdout callback 不會各自建立一個等待中的 Task。每條連線只有一個依序消費者；尚未交給 actor 的片段先按原順序合併，總量超過 4 MB 就停止讀取並捨棄該精確連線。
 - 進入 parser 後，每一條 JSONL 行與最後尚未換行的尾端另有獨立 4 MB 上限。parser 先切出完整行再檢查尾端，不會因一次 read 暫時包含多條合法訊息就誤拒。前後兩道上限分別約束「排隊中」與「單一行」的資料，長期合法通知不會按連線生命週期累加。
-- `error.message` 是不可信的 provider 文字，只用於分類「未登入／版本不支援／一般失敗」。UI 只顯示 App 自己寫的固定訊息與數字 error code，不顯示、保存或記錄原始 message。
+- 診斷紀錄依 request ID 配對失敗的查詢，保存方法、RPC 錯誤碼，以及這次使用的背景程序是新啟動或沿用。若回覆另有 HTTP 狀態碼或可辨識的原因，會一併列出。Codex CLI 0.164.0 在隔離測試中會把 HTTP 401 和 `token_expired` 放進 JSON-RPC 的錯誤訊息。回覆只有憑證過期的文字時，紀錄會說明原因。只有 Codex 明確回傳 `token_expired` 時，才會列出這個代碼。單獨的 401 或 `-32603` 無法判定憑證過期。原始訊息、回應本文和 stderr 均不保存。
+- 程序意外結束時，紀錄保存 AUB 從作業系統收到的退出碼或終止訊號。這也涵蓋建立連線時退出的情況。
+- 版本不相容的判斷採用 RPC `-32601` 或明確指出查詢方法不支援的訊息。HTTP 錯誤保留已提供的狀態碼。
 
 ## 6. 更新頻率與資料新鮮度
 
 通知是額度的主要即時更新來源。`account/rateLimits/read` 另依原本的額度頻率做保險查詢，預設每 10 分鐘；`account/usage/read` 使用獨立 Token 更新頻率，預設 1 小時，可選 15／30 分鐘或 1／2／3／6 小時。兩者共用同一條 App Server 連線，但有各自的 timer、Task、上次成功時間與 `FetchPacing` 判斷。按「重新整理」會同時要求兩者；20 秒防連點底線仍分別適用。
 
-額度失敗時從 60 秒開始指數退避，最高 15 分鐘；Token 統計失敗不降級額度，也不清除舊 Token 統計，下一次依自己的正常間隔再試。OpenAI 官方文件描述 read 與 updated notification，但目前沒有為這些唯讀 method 指定最低輪詢間隔、每分鐘上限或固定懲罰窗。預設頻率與額度退避上限是本 App 的保守策略，不是官方限制。
+額度失敗時從 60 秒開始指數退避，最高 15 分鐘；Token 統計失敗會留下獨立的錯誤紀錄，保留原有讀數，下一次依自己的正常間隔再試。同一種查詢下次成功時，AUB 會在最近一筆失敗紀錄補上恢復時間。AUB 以自己建立的程序識別碼比對兩次查詢，標示重試是否換過背景程序。OpenAI 官方文件描述 read 與 updated notification，但目前沒有為這些唯讀 method 指定最低輪詢間隔、每分鐘上限或固定懲罰窗。預設頻率與額度退避上限是本 App 的保守策略，不是官方限制。
+
+額度的計時器只觸發額度查詢。失敗後的重試遵守原定期限，調整一般更新間隔或喚醒電腦時會沿用剩餘等待時間。Token 查詢失敗後也會等完自己的更新間隔。手動重新整理仍同時要求兩項資料，並遵守 20 秒的查詢間隔下限。
 
 額度 read 成功才會建立可顯示的完整 snapshot；Token 統計是獨立附加能力，可以在已有額度後單獨替換。版本不支援、逾時或 schema 不可信時不會丟掉已取得的額度或上一份可信 Token 統計。Snapshot 的 `fetchedAt` 代表額度 read 時間，`CodexAccountUsage.fetchedAt` 代表 Token 統計 read 時間；每日資料另以最新 bucket 的日期標示「資料統計至」。notification 不重設任何 read 時間，也不延後排程。
 
+在設定中切換 Codex 執行檔時，AUB 先清除畫面與儲存中的舊讀數，再向新來源查詢額度及 Token。新來源的 Token 查詢失敗時，該欄位保持未知，避免混入舊來源的統計。
+
 ## 7. Process recovery
 
-`CodexAppServerClient.shared` 是 App 內唯一的 App Server owner。initialize 最長等 10 秒，每個 read 最長等 15 秒。意外退出或 request timeout 時，client 會讓 exact owned connection 失效；逾時的 request 保留精確 `codexRequestTimedOut`，其他 pending request 以連線不可用結束。下一次 fetch 會啟動新程序並重新 handshake。
+`CodexAppServerClient.shared` 管理 AUB 啟動的 App Server。建立連線最長等 10 秒，每次查詢最長等 15 秒。查詢逾時只會關閉當次使用的連線，該查詢回報 `codexRequestTimedOut`，同一條連線上的其他查詢回報連線不可用。如果下次查詢發現背景程序已退出，會先用退出狀態結束舊查詢、清理舊程序的工作目錄，再啟動新程序並重新連線。
 
 停用 Codex、變更 CLI 路徑、結束 App 或捨棄故障連線時，只處理這個 client 自己建立的精確 `Process`：
 

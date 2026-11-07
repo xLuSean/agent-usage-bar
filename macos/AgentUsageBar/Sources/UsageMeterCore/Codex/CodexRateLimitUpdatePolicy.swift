@@ -46,7 +46,17 @@ public enum CodexRateLimitUpdatePolicy {
         }
 
         let baseIDs = Set(base.windows.map(\.id))
-        var windows = base.windows.map { updateByID[$0.id] ?? $0 }
+        var windows = base.windows.map { previous in
+            guard let incoming = updateByID[previous.id] else { return previous }
+            let sameDuration = incoming.durationMinutes == nil || incoming.durationMinutes == previous.durationMinutes
+            let previousReset = previous.resetsAt.flatMap { sameDuration && $0 > update.fetchedAt ? $0 : nil }
+            return UsageWindow(
+                kind: incoming.kind, group: incoming.group, used: incoming.used,
+                resetsAt: incoming.resetsAt ?? previousReset, isActive: incoming.isActive,
+                modelDisplayName: incoming.modelDisplayName,
+                durationMinutes: incoming.durationMinutes ?? previous.durationMinutes
+            )
+        }
         var appendedIDs = baseIDs
         for window in update.windows where appendedIDs.insert(window.id).inserted {
             windows.append(updateByID[window.id] ?? window)

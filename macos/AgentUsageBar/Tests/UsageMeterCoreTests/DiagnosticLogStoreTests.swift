@@ -260,4 +260,108 @@ struct DiagnosticLogStoreTests {
             #expect(store.loadRetention() == .sevenDays)
         }
     }
+
+    @Test("the next success annotates only the latest failure for that query, including across launches")
+    func correlatesRecoveryPerQuery() {
+        withStore { store, defaults in
+            let now = Date()
+            var quota = CodexQueryDiagnostic(method: .rateLimitsRead)
+            quota.process = .init(startedAt: now.addingTimeInterval(-200), reused: true)
+            var tokens = CodexQueryDiagnostic(method: .accountUsageRead)
+            tokens.process = quota.process
+            #expect(store.recordRecovery(for: tokens, now: now).isEmpty)
+            let error = UsageError.codexAppServerUnavailable("private-marker")
+            for (offset, query) in [quota, tokens, quota].enumerated() {
+                _ = store.append(provider: .codex, error: error, codexQuery: query,
+                                 now: now.addingTimeInterval(Double(offset)))
+            }
+            let reloaded = DiagnosticLogStore(defaults: defaults)
+            quota.process = .init(startedAt: now.addingTimeInterval(3), reused: false)
+            let later = now.addingTimeInterval(5)
+            let entries = reloaded.recordRecovery(for: quota, now: later)
+            let en = Locale(identifier: "en_US")
+            #expect(entries.count == 3)
+            #expect(entries[0].copyText(locale: en).contains("using a different background process"))
+            #expect(!entries[1].copyText(locale: en).contains("Retry succeeded"))
+            #expect(!entries[2].copyText(locale: en).contains("Retry succeeded"))
+            #expect(reloaded.recordRecovery(for: quota, now: later.addingTimeInterval(1)) == entries)
+            _ = reloaded.recordRecovery(for: tokens, now: later)
+            #expect(store.load(now: later)[1].copyText(locale: en).contains("using the same background process"))
+            store.clear()
+            #expect(store.recordRecovery(for: quota, now: later).isEmpty)
+            #expect(store.load(now: later).isEmpty)
+        }
+    }
+
+    @Test("expiry explanations keep only explicitly reported service codes after storage and copying")
+    func separatesReportedCodesFromProse() throws {
+        let phrase = "Your authentication token has expired. Please try refreshing it."
+        let old = try JSONDecoder().decode(CodexRPCRejection.self, from: Data(
+            #"{"code":-32603,"httpStatus":401,"reason":"tokenExpired"}"#.utf8
+        ))
+        let cases: [(CodexRPCRejection, Bool)] = [
+            (.init(code: -32603, message: phrase), false),
+            (.init(code: -32603, message: "GET https://fixture.invalid failed: 401 Unauthorized; body={\"error\":{\"message\":\"\(phrase)\"}}"), false),
+            (.init(code: -32603, message: phrase, data: ["code": "private-marker"]), false),
+            (old, false),
+            (.init(code: -32603, message: "internal error", data: ["error": ["code": "token_expired"]]), true),
+            (.init(code: -32603, message: "token_expired"), true),
+        ]
+        try withStore { store, defaults in
+            for (rejection, reported) in cases {
+                var query = CodexQueryDiagnostic(method: .rateLimitsRead)
+                query.rpc = rejection
+                store.clear()
+                _ = store.append(provider: .codex, error: rejection.usageError(for: .rateLimitsRead), codexQuery: query)
+                let entry = try #require(store.load().first)
+                let zh = Locale(identifier: "zh_Hant_TW")
+                #expect(entry.detailMessage(locale: zh).contains("登入憑證已過期"))
+                for locale in [zh, Locale(identifier: "en_US")] {
+                    #expect(entry.detailMessage(locale: locale).contains("token_expired") == reported)
+                    #expect(entry.copyText(locale: locale).contains("token_expired") == reported)
+                    #expect(!entry.copyText(locale: locale).contains("private-marker"))
+                }
+                let bytes = try #require(defaults.data(forKey: "v1.diagnosticLog"))
+                #expect(!String(decoding: bytes, as: UTF8.self).contains("private-marker"))
+            }
+        }
+    }
+
+    @Test("a successful query returns the retained history even when it has no recovery to annotate")
+    func returnsPrunedHistoryWithoutRecovery() {
+        withStore { store, _ in
+            let before = Date()
+            _ = store.append(provider: .claude, error: .offline, now: before)
+            let later = before.addingTimeInterval(5 * 86_400 + 1)
+            let recent = store.append(provider: .claude, error: .offline, now: later.addingTimeInterval(-2))
+            #expect(recent.count == 2)
+            let quota = CodexQueryDiagnostic(method: .rateLimitsRead)
+            #expect(store.recordRecovery(for: quota, now: later) == Array(recent.prefix(1)))
+            #expect(store.load(now: later) == Array(recent.prefix(1)))
+        }
+    }
+
+    @Test("rich diagnostics keep their newest entries within the encoded byte limit")
+    func boundsRichHistory() throws {
+        try withStore { store, defaults in
+            let now = Date()
+            var query = CodexQueryDiagnostic(method: .rateLimitsRead)
+            query.process = .init(startedAt: now, reused: false)
+            query.failedDuringInitialization = true
+            query.rpc = CodexRPCRejection(code: -32603, message: "HTTP 401 Unauthorized")
+            let error = UsageError.codexAppServerUnavailable("private-marker")
+            var latest: DiagnosticLogEntry?
+            for offset in 0...DiagnosticLogStore.maximumEntries {
+                let time = now.addingTimeInterval(Double(offset))
+                latest = store.append(provider: .codex, error: error, codexQuery: query, now: time).first
+                _ = store.recordRecovery(for: query, now: time)
+            }
+            let data = try #require(defaults.data(forKey: "v1.diagnosticLog"))
+            let readback = store.load(now: now.addingTimeInterval(300))
+            #expect(data.count <= DiagnosticLogStore.maximumStoredBytes)
+            #expect(!readback.isEmpty && readback.count < DiagnosticLogStore.maximumEntries)
+            #expect(readback.first?.id == latest?.id)
+            #expect(!String(decoding: data, as: UTF8.self).contains("private-marker"))
+        }
+    }
 }

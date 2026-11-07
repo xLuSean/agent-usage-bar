@@ -109,8 +109,8 @@ private struct DiagnosticsSettingsTab: View {
                         model.displayLanguage.text(chinese: "沒有錯誤紀錄", english: "No Error History"),
                         systemImage: "checkmark.circle",
                         description: Text(model.displayLanguage.text(
-                            chinese: "查詢失敗時，這裡只會保存時間、供應商與錯誤類型。",
-                            english: "Failed queries will record only the time, provider, and error category."
+                            chinese: "查詢失敗後，可在這裡查看發生時間與原因。",
+                            english: "When a query fails, its time and available details appear here."
                         ))
                     )
                 } else {

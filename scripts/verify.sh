@@ -221,7 +221,8 @@ echo "==> status bar self-test (real NSStatusItem wiring, isolated preferences)"
 "$TEST_BIN" --selftest
 
 echo "==> provider transition self-test (isolated preferences + synthetic providers)"
-"$TEST_BIN" --provider-transition-selftest
+AUB_CODEX_DIAGNOSTIC_FIXTURE="$PACKAGE_DIR/Tests/Fixtures/codex-app-server-error-stub" \
+  "$TEST_BIN" --provider-transition-selftest
 
 echo "==> UI render check (isolated preferences)"
 mkdir -p "$ROOT/dist"

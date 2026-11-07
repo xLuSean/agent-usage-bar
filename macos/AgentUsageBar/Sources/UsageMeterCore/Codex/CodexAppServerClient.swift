@@ -4,19 +4,64 @@ import Foundation
 public struct CodexAppServerRead: Sendable, Hashable {
     public let payload: Data
     public let serverUserAgent: String?
+    var diagnostic: CodexQueryDiagnostic?
+    fileprivate var notificationExecutableURL: URL?
 
     public init(payload: Data, serverUserAgent: String?) {
         self.payload = payload
         self.serverUserAgent = serverUserAgent
+    }
+
+    /// A notification may still be queued for the UI when the user switches CLI.
+    public func isNotification(fromConfiguredPath path: String?) -> Bool {
+        guard let notificationExecutableURL else { return false }
+        return notificationExecutableURL == (try? CodexExecutableLocator(configuredPath: path).locate())
+    }
+
+    func decode<T>(_ transform: (Data) throws -> T) throws -> T {
+        do {
+            return try transform(payload)
+        } catch {
+            guard let diagnostic else { throw error }
+            throw diagnostic.failure(error)
+        }
+    }
+}
+
+public enum CodexUsageQuery: Sendable {
+    case quota, tokenUsage
+
+    var method: CodexJSONRPCMethod {
+        switch self {
+        case .quota: .rateLimitsRead
+        case .tokenUsage: .accountUsageRead
+        }
     }
 }
 
 public protocol CodexAppServerReading: Sendable {
     func readRateLimits(configuredExecutablePath: String?) async throws -> CodexAppServerRead
     func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead
+    func readWithDiagnostics(_ query: CodexUsageQuery, configuredExecutablePath: String?) async throws -> CodexAppServerRead
 }
 
 public extension CodexAppServerReading {
+    func readWithDiagnostics(_ query: CodexUsageQuery, configuredExecutablePath path: String?) async throws -> CodexAppServerRead {
+        let diagnostic = CodexQueryDiagnostic(method: query.method)
+        do {
+            var result = switch query {
+            case .quota: try await readRateLimits(configuredExecutablePath: path)
+            case .tokenUsage: try await readAccountUsage(configuredExecutablePath: path)
+            }
+            if result.diagnostic == nil { result.diagnostic = diagnostic }
+            return result
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw diagnostic.failure(error)
+        }
+    }
+
     /// Keeps test doubles and older internal readers source-compatible. The provider treats
     /// this optional capability independently from the required rate-limit reading.
     func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
@@ -127,6 +172,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
     public nonisolated let rateLimitUpdates: AsyncStream<CodexAppServerRead>
 
     private struct PendingRequest {
+        let generation: Int
         let continuation: CheckedContinuation<Data, Error>
     }
 
@@ -134,7 +180,9 @@ public actor CodexAppServerClient: CodexAppServerReading {
     private let initializeTimeoutSeconds: TimeInterval
     private let readTimeoutSeconds: TimeInterval
     private let terminationGraceSeconds: TimeInterval
+    private let makeProcess: @Sendable () -> Process
     private var process: Process?
+    private var backgroundProcess: CodexQueryDiagnostic.BackgroundProcess?
     private var processWorkingDirectory: ProviderProcessWorkingDirectory?
     private var inputHandle: FileHandle?
     private var outputHandle: FileHandle?
@@ -153,21 +201,14 @@ public actor CodexAppServerClient: CodexAppServerReading {
     private var terminationWaiters: [Int32: [CheckedContinuation<Void, Never>]] = [:]
 
     public init() {
-        initializeTimeoutSeconds = 10
-        readTimeoutSeconds = 15
-        terminationGraceSeconds = 1
-        let stream = AsyncStream.makeStream(
-            of: CodexAppServerRead.self,
-            bufferingPolicy: .bufferingNewest(1)
-        )
-        rateLimitUpdates = stream.stream
-        updateContinuation = stream.continuation
+        self.init(initializeTimeoutSeconds: 10, readTimeoutSeconds: 15)
     }
 
     init(
         initializeTimeoutSeconds: TimeInterval,
         readTimeoutSeconds: TimeInterval,
-        terminationGraceSeconds: TimeInterval = 1
+        terminationGraceSeconds: TimeInterval = 1,
+        makeProcess: @escaping @Sendable () -> Process = { Process() }
     ) {
         precondition(
             initializeTimeoutSeconds > 0
@@ -177,6 +218,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
         self.initializeTimeoutSeconds = initializeTimeoutSeconds
         self.readTimeoutSeconds = readTimeoutSeconds
         self.terminationGraceSeconds = terminationGraceSeconds
+        self.makeProcess = makeProcess
         let stream = AsyncStream.makeStream(
             of: CodexAppServerRead.self,
             bufferingPolicy: .bufferingNewest(1)
@@ -186,25 +228,36 @@ public actor CodexAppServerClient: CodexAppServerReading {
     }
 
     public func readRateLimits(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
-        let requestedURL = try CodexExecutableLocator(configuredPath: configuredExecutablePath).locate()
-        try await ensureConnected(to: requestedURL)
-        let payload = try await sendRequest(
-            .rateLimitsRead,
-            params: nil,
-            timeoutSeconds: readTimeoutSeconds
-        )
-        return CodexAppServerRead(payload: payload, serverUserAgent: serverUserAgent)
+        try await CodexQueryFailure.withOriginalError {
+            try await self.readWithDiagnostics(.quota, configuredExecutablePath: configuredExecutablePath)
+        }
     }
 
     public func readAccountUsage(configuredExecutablePath: String?) async throws -> CodexAppServerRead {
-        let requestedURL = try CodexExecutableLocator(configuredPath: configuredExecutablePath).locate()
-        try await ensureConnected(to: requestedURL)
-        let payload = try await sendRequest(
-            .accountUsageRead,
-            params: nil,
-            timeoutSeconds: readTimeoutSeconds
-        )
-        return CodexAppServerRead(payload: payload, serverUserAgent: serverUserAgent)
+        try await CodexQueryFailure.withOriginalError {
+            try await self.readWithDiagnostics(.tokenUsage, configuredExecutablePath: configuredExecutablePath)
+        }
+    }
+
+    public func readWithDiagnostics(_ query: CodexUsageQuery, configuredExecutablePath: String?) async throws -> CodexAppServerRead {
+        var diagnostic = CodexQueryDiagnostic(method: query.method)
+        do {
+            let requestedURL = try CodexExecutableLocator(configuredPath: configuredExecutablePath).locate()
+            let readyGeneration = isReady ? generation : nil
+            try await ensureConnected(to: requestedURL)
+            guard executableURL == requestedURL, var background = backgroundProcess else {
+                throw UsageError.codexAppServerUnavailable("Codex App Server is not running")
+            }
+            background.reused = readyGeneration == generation
+            diagnostic.process = background
+            let agent = serverUserAgent
+            let payload = try await sendRequest(query.method, params: nil, timeoutSeconds: readTimeoutSeconds)
+            var result = CodexAppServerRead(payload: payload, serverUserAgent: agent)
+            result.diagnostic = diagnostic
+            return result
+        } catch {
+            throw diagnostic.failure(error)
+        }
     }
 
     /// Terminates only the process this client launched. Safe to call when stopped.
@@ -228,11 +281,14 @@ public actor CodexAppServerClient: CodexAppServerReading {
             try await withCheckedThrowingContinuation { continuation in
                 startupWaiters.append(continuation)
             }
-            if isReady, executableURL == requestedURL { return }
             return try await ensureConnected(to: requestedURL)
         }
 
-        if executableURL != nil, executableURL != requestedURL {
+        if let process, !process.isRunning {
+            // Foundation can deliver the exit callback after the next read arrives.
+            // Settle this child's requests and release its directory before replacing it.
+            processDidExit(CodexProcessExit(process), generation: generation)
+        } else if executableURL != nil, executableURL != requestedURL {
             stopConnection(
                 failingPendingWith: UsageError.codexAppServerUnavailable("Codex CLI path changed"),
                 terminateProcess: true
@@ -240,8 +296,10 @@ public actor CodexAppServerClient: CodexAppServerReading {
         }
 
         isStarting = true
+        var startup = CodexQueryDiagnostic(method: .initialize)
         do {
             try launch(executableURL: requestedURL)
+            startup.process = backgroundProcess
             let initializeResult = try await sendRequest(
                 .initialize,
                 params: Self.initializeParams,
@@ -254,10 +312,10 @@ public actor CodexAppServerClient: CodexAppServerReading {
             resumeStartupWaiters(with: nil)
         } catch {
             isStarting = false
-            let usageError = (error as? UsageError) ?? .codexAppServerUnavailable(error.localizedDescription)
-            stopConnection(failingPendingWith: usageError, terminateProcess: true)
-            resumeStartupWaiters(with: usageError)
-            throw usageError
+            let failure = startup.failure(error)
+            stopConnection(failingPendingWith: failure.error, terminateProcess: true)
+            resumeStartupWaiters(with: failure)
+            throw failure
         }
     }
 
@@ -279,7 +337,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
     private func launch(executableURL: URL) throws {
         generation += 1
         let launchedGeneration = generation
-        let process = Process()
+        let process = makeProcess()
         let input = Pipe()
         let output = Pipe()
         let workingDirectory: ProviderProcessWorkingDirectory
@@ -313,8 +371,8 @@ public actor CodexAppServerClient: CodexAppServerReading {
             Task { await self?.drainOutput(ingress, generation: launchedGeneration) }
         }
         process.terminationHandler = { [weak self] terminated in
-            let status = terminated.terminationStatus
-            Task { await self?.processDidExit(status: status, generation: launchedGeneration) }
+            let exit = CodexProcessExit(terminated)
+            Task { await self?.processDidExit(exit, generation: launchedGeneration) }
         }
 
         do {
@@ -327,6 +385,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
         }
 
         self.process = process
+        backgroundProcess = .init()
         processWorkingDirectory = workingDirectory
         inputHandle = input.fileHandleForWriting
         outputHandle = output.fileHandleForReading
@@ -346,7 +405,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
         let data = try CodexJSONRPC.request(method, id: id, params: params)
 
         return try await withCheckedThrowingContinuation { continuation in
-            pending[id] = PendingRequest(continuation: continuation)
+            pending[id] = PendingRequest(generation: generation, continuation: continuation)
             do {
                 try write(data)
             } catch {
@@ -362,12 +421,14 @@ public actor CodexAppServerClient: CodexAppServerReading {
     }
 
     private func write(_ data: Data) throws {
-        guard process?.isRunning == true, let inputHandle else {
+        guard let process, let inputHandle else {
             throw UsageError.codexAppServerUnavailable("Codex App Server is not running")
         }
+        guard process.isRunning else { throw CodexProcessExit(process) }
         do {
             try inputHandle.write(contentsOf: data)
         } catch {
+            if !process.isRunning { throw CodexProcessExit(process) }
             throw UsageError.codexAppServerUnavailable("Failed to write to Codex App Server: \(error.localizedDescription)")
         }
     }
@@ -387,14 +448,12 @@ public actor CodexAppServerClient: CodexAppServerReading {
             switch CodexJSONRPCParser.parse(line) {
             case .result(let id, let payload):
                 pending.removeValue(forKey: id)?.continuation.resume(returning: payload)
-            case .failure(let id, let code, let message):
-                pending.removeValue(forKey: id)?.continuation.resume(
-                    throwing: Self.mapRPCError(code: code, message: message)
-                )
+            case .failure(let id, let rejection):
+                pending.removeValue(forKey: id)?.continuation.resume(throwing: rejection)
             case .notification("account/rateLimits/updated", let payload):
-                updateContinuation.yield(
-                    CodexAppServerRead(payload: payload, serverUserAgent: serverUserAgent)
-                )
+                var update = CodexAppServerRead(payload: payload, serverUserAgent: serverUserAgent)
+                update.notificationExecutableURL = executableURL
+                updateContinuation.yield(update)
             case .notification, .ignored:
                 // Other notifications are unrelated to this read-only provider. Bad
                 // lines are isolated rather than poisoning later JSONL messages.
@@ -426,25 +485,16 @@ public actor CodexAppServerClient: CodexAppServerReading {
         ingress.close()
     }
 
-    static func mapRPCError(code: Int, message: String) -> UsageError {
-        let lower = message.lowercased()
-        if code == -32601 || lower.contains("method not found") || lower.contains("not supported") {
-            return .codexVersionIncompatible(
-                "The selected Codex App Server does not support account/rateLimits/read."
-            )
-        }
-        if lower.contains("not logged in") || lower.contains("not authenticated")
-            || lower.contains("authentication required") || lower.contains("login required") {
-            return .codexNotLoggedIn
-        }
-        return .codexAppServerUnavailable("Codex App Server returned error code \(code).")
-    }
-
     private func requestDidTimeOut(id: Int, method: CodexJSONRPCMethod) {
+        if pending[id]?.generation == generation, let process, !process.isRunning {
+            processDidExit(CodexProcessExit(process), generation: generation)
+            return
+        }
         guard let request = pending.removeValue(forKey: id) else { return }
         request.continuation.resume(
             throwing: UsageError.codexRequestTimedOut(method.rawValue)
         )
+        guard request.generation == generation else { return }
         stopConnection(
             failingPendingWith: UsageError.codexAppServerUnavailable(
                 "Codex App Server connection was discarded after a request timeout"
@@ -453,17 +503,12 @@ public actor CodexAppServerClient: CodexAppServerReading {
         )
     }
 
-    private func processDidExit(status: Int32, generation exitedGeneration: Int) {
+    private func processDidExit(_ exit: CodexProcessExit, generation exitedGeneration: Int) {
         guard exitedGeneration == generation else { return }
-        stopConnection(
-            failingPendingWith: UsageError.codexAppServerUnavailable(
-                "Codex App Server stopped unexpectedly (exit \(status))"
-            ),
-            terminateProcess: false
-        )
+        stopConnection(failingPendingWith: exit, terminateProcess: false)
     }
 
-    private func stopConnection(failingPendingWith error: UsageError, terminateProcess: Bool) {
+    private func stopConnection(failingPendingWith error: any Error, terminateProcess: Bool) {
         generation += 1
         outputHandle?.readabilityHandler = nil
         outputIngress?.close()
@@ -476,6 +521,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
         let processToStop = process
         let workingDirectoryToStop = processWorkingDirectory
         process = nil
+        backgroundProcess = nil
         processWorkingDirectory = nil
         executableURL = nil
         serverUserAgent = nil
@@ -552,7 +598,7 @@ public actor CodexAppServerClient: CodexAppServerReading {
         }
     }
 
-    private func resumeStartupWaiters(with error: UsageError?) {
+    private func resumeStartupWaiters(with error: CodexQueryFailure?) {
         let waiters = startupWaiters
         startupWaiters.removeAll()
         for waiter in waiters {

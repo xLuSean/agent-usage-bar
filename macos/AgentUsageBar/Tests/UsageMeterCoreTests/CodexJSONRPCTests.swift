@@ -67,12 +67,47 @@ struct CodexJSONRPCTests {
         #expect(method == "account/rateLimits/updated")
     }
 
-    @Test("JSON-RPC error 保留 code 與訊息，不保留任意 data")
+    @Test("JSON-RPC failures retain only codes and a known reason")
     func errorEnvelope() {
         let inbound = CodexJSONRPCParser.parse(
             Data(#"{"id":3,"error":{"code":-32601,"message":"Method not found","data":{"secret":"not retained"}}}"#.utf8)
         )
-        #expect(inbound == .failure(id: 3, code: -32601, message: "Method not found"))
+        #expect(inbound == .failure(id: 3, rejection: CodexRPCRejection(code: -32601, message: "Method not found")))
+    }
+
+    @Test("401 or a stray token_expired string alone cannot establish both status and cause")
+    func requiresExplicitErrorEvidence() {
+        let message = #"GET https://fixture.invalid failed: 401 Unauthorized; content-type=text/plain; body={"error":{"message":"debug token_expired","code":"unrelated"}}"#
+        let unauthorized = CodexRPCRejection(code: -32603, message: message)
+        #expect(unauthorized.httpStatus == 401)
+        #expect(unauthorized.reason == .unspecified)
+        let noStatus = CodexRPCRejection(code: -32603, message: "token_expired")
+        #expect(noStatus.httpStatus == nil)
+        #expect(noStatus.reason == .tokenExpired)
+        let generic = CodexRPCRejection(code: -32603, message: "trace=401-token_expired")
+        #expect(generic.httpStatus == nil)
+        #expect(generic.reason == .unspecified)
+        let structured = CodexRPCRejection(code: -32603, message: "internal error", data: [
+            "error": ["code": "token_expired"], "status": 401, "extra": "private-marker"
+        ])
+        #expect(structured.httpStatus == 401)
+        #expect(structured.reason == .tokenExpired)
+        let explicitCause = CodexRPCRejection(code: -32603, message:
+            #"GET https://fixture.invalid failed: 401 Unauthorized; body={"error":{"code":"token_expired"},"note":"not supported"}"#)
+        #expect(explicitCause.reason == .tokenExpired)
+    }
+
+    @Test("HTTP errors and unsupported content encodings do not diagnose an incompatible CLI")
+    func distinguishesMethodAndServiceErrors() {
+        let http = CodexRPCRejection(code: -32603, message:
+            #"GET https://fixture.invalid failed: 415 Unsupported Media Type; body={"error":{"message":"Content encoding not supported"}}"#)
+        #expect(http.httpStatus == 415)
+        #expect(http.reason == .unspecified)
+        #expect(http.usageError(for: .rateLimitsRead) == .codexAppServerUnavailable("Codex App Server returned error code -32603."))
+        #expect(CodexRPCRejection(code: -32603, message: "Content encoding not supported").reason == .unspecified)
+        #expect(CodexRPCRejection(code: -32603, message: "Method not found: account/usage/read").reason == .unsupported)
+        #expect(CodexRPCRejection(code: -32603, message: "Method account/rateLimits/read is not supported").reason == .unsupported)
+        #expect(CodexRPCRejection(code: -32601, message: "private-marker").reason == .unsupported)
     }
 
     @Test("request id 與 error code 不接受會被截斷的小數")

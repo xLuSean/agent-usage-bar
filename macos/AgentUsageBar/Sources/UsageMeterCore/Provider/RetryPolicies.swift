@@ -44,20 +44,30 @@ extension BackoffPolicy {
 public struct RetryBackoff: Sendable {
     public let policy: BackoffPolicy
     public private(set) var consecutiveFailures: Int = 0
+    private var lastFailure: (at: Date, delay: TimeInterval)?
 
     public init(policy: BackoffPolicy = .claude) {
         self.policy = policy
     }
 
-    public mutating func recordFailure() -> TimeInterval {
+    public mutating func recordFailure(at now: Date = Date()) -> TimeInterval {
         consecutiveFailures += 1
         let exponent = Double(consecutiveFailures - 1)
         let raw = policy.initial * pow(policy.multiplier, exponent)
-        guard raw.isFinite else { return policy.cap }
-        return min(raw, policy.cap)
+        let delay = raw.isFinite ? min(raw, policy.cap) : policy.cap
+        lastFailure = (now, delay)
+        return delay
+    }
+
+    /// Nil when healthy, zero when the retry is due (including after a clock rollback).
+    public func remainingDelay(at now: Date) -> TimeInterval? {
+        guard let lastFailure else { return nil }
+        let elapsed = now.timeIntervalSince(lastFailure.at)
+        return elapsed >= 0 ? max(0, lastFailure.delay - elapsed) : 0
     }
 
     public mutating func reset() {
         consecutiveFailures = 0
+        lastFailure = nil
     }
 }

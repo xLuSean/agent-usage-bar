@@ -14,6 +14,7 @@ final class ProviderPresenter {
         _ claudeExecutablePath: String?,
         _ codexExecutablePath: String?
     ) -> any UsageProvider
+    typealias ScheduleTimer = @MainActor (TimeInterval, @escaping @MainActor () -> Void) -> Timer
 
     let provider: ProviderKind
     private(set) var state: UsageDisplayState = .starting
@@ -78,6 +79,8 @@ final class ProviderPresenter {
     private var pendingCodexAccountUsage: CodexAccountUsage?
     private let snapshotStore: UsageSnapshotStore
     private let providerFactory: ProviderFactory?
+    private let now: @MainActor () -> Date
+    private let scheduleTimer: ScheduleTimer
     private var timer: Timer?
     private var codexTokenTimer: Timer?
     /// Set while the screen is locked or the machine is asleep. Polling an endpoint that
@@ -90,7 +93,8 @@ final class ProviderPresenter {
 
     /// Supplied by AppModel. Only accepted fetch failures reach this callback; malformed
     /// advisory pushes remain ignored and cannot flood the persisted diagnostic log.
-    var onDiagnosticError: ((UsageError) -> Void)?
+    var onDiagnosticError: ((UsageError, CodexQueryDiagnostic?) -> Void)?
+    var onCodexQuerySuccess: ((CodexQueryDiagnostic) -> Void)?
 
     /// Supplied by AppModel. `nil` means auto-detect common executable locations.
     var claudeExecutablePath: () -> String? = { nil }
@@ -105,7 +109,14 @@ final class ProviderPresenter {
     init(
         provider: ProviderKind,
         snapshotStore: UsageSnapshotStore,
-        providerFactory: ProviderFactory? = nil
+        providerFactory: ProviderFactory? = nil,
+        now: @escaping @MainActor () -> Date = Date.init,
+        scheduleTimer: @escaping ScheduleTimer = { delay, action in
+            let timer = Timer(timeInterval: delay, repeats: false) { _ in MainActor.assumeIsolated { action() } }
+            // Keep polling while a menu or popover is tracking.
+            RunLoop.main.add(timer, forMode: .common)
+            return timer
+        }
     ) {
         self.provider = provider
         self.settings = SettingsStore.load(provider)
@@ -113,12 +124,14 @@ final class ProviderPresenter {
         self.backoff = RetryBackoff(policy: .forProvider(provider))
         self.snapshotStore = snapshotStore
         self.providerFactory = providerFactory
+        self.now = now
+        self.scheduleTimer = scheduleTimer
 
         // Start from what was already known rather than from nothing. A relaunch used
         // to blank the gauge and immediately ask again; the reading it threw away was
         // usually still good.
         if let stored = snapshotStore.load(provider) {
-            let age = Date().timeIntervalSince(stored.fetchedAt)
+            let age = now().timeIntervalSince(stored.fetchedAt)
             state = age < settings.refreshInterval.seconds
                 ? .current(stored)
                 : .stale(stored, reason: .transport("Data is from the previous app session"))
@@ -156,6 +169,7 @@ final class ProviderPresenter {
             for await update in updates {
                 guard !Task.isCancelled, let self else { return }
                 guard self.settings.isEnabled, !self.isPaused else { continue }
+                guard update.isNotification(fromConfiguredPath: self.codexExecutablePath()) else { continue }
                 do {
                     let snapshot = try CodexRateLimitDecoder.decode(
                         update.payload,
@@ -185,7 +199,13 @@ final class ProviderPresenter {
     @discardableResult
     func providerConfigurationChanged(refreshImmediately: Bool = true) -> UInt64 {
         let generation = advanceConfigurationGeneration()
-        if let snapshot = state.snapshot {
+        if provider == .codex {
+            // A different CLI may read a different account. Drop both readings before
+            // the first quota or token result can arrive, including across relaunch.
+            snapshotStore.clear(.codex)
+            state = .starting
+            onVisualChange?()
+        } else if let snapshot = state.snapshot {
             state = .stale(
                 snapshot,
                 reason: .transport("\(provider.displayName) CLI path changed; waiting to reconnect")
@@ -210,14 +230,18 @@ final class ProviderPresenter {
     private func advanceConfigurationGeneration() -> UInt64 {
         configurationGeneration &+= 1
         pendingCodexAccountUsage = nil
+        backoff.reset()
+        consecutiveFailures = 0
         return configurationGeneration
     }
 
     func requestRefresh(reason: FetchPacing.Reason) {
+        requestCodexTokenRefresh(reason: reason)
+        requestQuotaRefresh(reason: reason)
+    }
+
+    private func requestQuotaRefresh(reason: FetchPacing.Reason) {
         guard settings.isEnabled, !isShuttingDown else { return }
-        if provider == .codex {
-            requestCodexTokenRefresh(reason: reason)
-        }
         if refreshTask != nil {
             if reason == .manual { pendingRefreshReason = .manual }
             return
@@ -241,7 +265,7 @@ final class ProviderPresenter {
         guard let pendingRefreshReason else { return }
         self.pendingRefreshReason = nil
         guard settings.isEnabled, !isShuttingDown else { return }
-        requestRefresh(reason: pendingRefreshReason)
+        requestQuotaRefresh(reason: pendingRefreshReason)
     }
 
     private func requestCodexTokenRefresh(reason: FetchPacing.Reason) {
@@ -303,18 +327,14 @@ final class ProviderPresenter {
 
         // A failed fetch schedules the next attempt from the backoff, not the user's
         // interval. Honouring the interval while backing off would defeat the backoff.
-        let delay = override ?? settings.refreshInterval.seconds
-        nextAttemptAt = Date().addingTimeInterval(delay)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.cancelScheduledAttempt()
-                self.requestRefresh(reason: reason)
-            }
+        let scheduledAt = now()
+        let delay = override ?? backoff.remainingDelay(at: scheduledAt) ?? settings.refreshInterval.seconds
+        nextAttemptAt = scheduledAt.addingTimeInterval(delay)
+        timer = scheduleTimer(delay) { [weak self] in
+            guard let self else { return }
+            self.cancelScheduledAttempt()
+            self.requestQuotaRefresh(reason: reason)
         }
-        // .common so the timer keeps firing while a menu or popover is tracking.
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     private func rescheduleCodexTokenTimer(
@@ -325,15 +345,11 @@ final class ProviderPresenter {
         guard provider == .codex, settings.isEnabled, !isPaused else { return }
 
         let delay = override ?? codexTokenRefreshInterval.seconds
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.cancelCodexTokenScheduledAttempt()
-                self.requestCodexTokenRefresh(reason: reason)
-            }
+        codexTokenTimer = scheduleTimer(delay) { [weak self] in
+            guard let self else { return }
+            self.cancelCodexTokenScheduledAttempt()
+            self.requestCodexTokenRefresh(reason: reason)
         }
-        RunLoop.main.add(timer, forMode: .common)
-        codexTokenTimer = timer
     }
 
     /// Runs the real fetch → state machine, whichever provider is behind it.
@@ -349,11 +365,17 @@ final class ProviderPresenter {
 
         // Checked before the latch so a skipped call does not look like a fetch that
         // produced nothing.
+        let attemptTime = now()
+        if reason == .scheduled, let remaining = backoff.remainingDelay(at: attemptTime), remaining > 0 {
+            rescheduleTimer(after: remaining)
+            return
+        }
         let decision = FetchPacing.decide(
             lastAttemptAt: lastAttemptAt,
-            storedFetchedAt: state.snapshot?.fetchedAt,
+            storedFetchedAt: backoff.consecutiveFailures == 0 ? state.snapshot?.fetchedAt : nil,
             interval: settings.refreshInterval.seconds,
-            reason: reason
+            reason: reason,
+            now: attemptTime
         )
         switch decision {
         case .fetch:
@@ -374,15 +396,17 @@ final class ProviderPresenter {
 
         state = .refreshing(previous: state.snapshot)
         onVisualChange?()
-        lastAttemptAt = Date()
+        lastAttemptAt = attemptTime
 
         do {
             var snapshot: UsageSnapshot
             if provider == .codex, providerFactory == nil {
-                snapshot = try await makeCodexProvider().fetchRateLimits(
+                let reading = try await makeCodexProvider().quotaReading(
                     preserving: pendingCodexAccountUsage ?? state.snapshot?.codexAccountUsage
                 )
                 guard fetchGeneration == configurationGeneration else { return }
+                snapshot = reading.snapshot
+                if let query = reading.query { onCodexQuerySuccess?(query) }
                 // A token response may have completed while the quota read was in
                 // flight. Apply the newest accepted value before publishing.
                 if let pendingCodexAccountUsage {
@@ -400,8 +424,7 @@ final class ProviderPresenter {
             rescheduleTimer()
         } catch {
             guard fetchGeneration == configurationGeneration else { return }
-            let usageError = (error as? UsageError) ?? .transport(error.localizedDescription)
-            onDiagnosticError?(usageError)
+            let usageError = recordDiagnostic(error)
             state = .afterFailure(usageError, previous: state.snapshot)
             if usageError.isExpectedLimitation {
                 // Nothing to back off from. Retrying a provider that has no
@@ -410,7 +433,7 @@ final class ProviderPresenter {
                 consecutiveFailures = 0
                 cancelScheduledAttempt()
             } else {
-                let delay = backoff.recordFailure()
+                let delay = backoff.recordFailure(at: now())
                 consecutiveFailures = backoff.consecutiveFailures
                 rescheduleTimer(after: delay)
             }
@@ -425,10 +448,13 @@ final class ProviderPresenter {
 
         let decision = FetchPacing.decide(
             lastAttemptAt: codexTokenLastAttemptAt,
-            storedFetchedAt: state.snapshot?.codexAccountUsage?.fetchedAt
-                ?? pendingCodexAccountUsage?.fetchedAt,
+            // A failed token read also starts a full interval. On relaunch only the
+            // persisted successful reading is available as a scheduling reference.
+            storedFetchedAt: codexTokenLastAttemptAt ?? pendingCodexAccountUsage?.fetchedAt
+                ?? state.snapshot?.codexAccountUsage?.fetchedAt,
             interval: codexTokenRefreshInterval.seconds,
-            reason: reason
+            reason: reason,
+            now: now()
         )
         switch decision {
         case .fetch:
@@ -442,13 +468,13 @@ final class ProviderPresenter {
         }
 
         let fetchGeneration = configurationGeneration
-        let fetchedAt = Date()
+        let fetchedAt = now()
         codexTokenLastAttemptAt = fetchedAt
         do {
-            let accountUsage = try await makeCodexProvider().fetchAccountUsage(
-                fetchedAt: fetchedAt
-            )
+            let reading = try await makeCodexProvider().tokenReading(fetchedAt: fetchedAt)
             guard fetchGeneration == configurationGeneration else { return }
+            let accountUsage = reading.usage
+            if let query = reading.query { onCodexQuerySuccess?(query) }
             pendingCodexAccountUsage = accountUsage
             if let mergedState = CodexAccountUsageUpdatePolicy.applying(accountUsage, to: state),
                let mergedSnapshot = mergedState.snapshot {
@@ -461,10 +487,18 @@ final class ProviderPresenter {
             return
         } catch {
             guard fetchGeneration == configurationGeneration else { return }
+            _ = recordDiagnostic(error)
             // This optional surface must not demote quota or erase the previous token
             // result. Try again on its own normal cadence.
             rescheduleCodexTokenTimer()
         }
+    }
+
+    private func recordDiagnostic(_ error: any Error) -> UsageError {
+        let failure = error as? CodexQueryFailure
+        let usageError = failure?.error ?? (error as? UsageError) ?? .transport(error.localizedDescription)
+        onDiagnosticError?(usageError, failure?.diagnostic)
+        return usageError
     }
 
     /// Stops scheduling and cancels the provider fetches this presenter owns. The

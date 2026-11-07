@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+[ "$#" -eq 3 ] && [ "$1" = app-server ] && [ "$2" = --listen ] && [ "$3" = stdio:// ] || exit 64
+while IFS= read -r line; do
+    id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+    case "$line" in
+        *'"method":"initialize"'*)
+            if [ "${AUB_CODEX_STUB_EXIT_ON_INIT:-0}" = 1 ]; then exit 78; fi
+            if [ "${AUB_CODEX_STUB_INIT_FAILURE:-0}" = 1 ]; then
+                printf '{"id":%s,"error":{"code":-32603,"message":"startup private-marker"}}\n' "$id"
+            else
+                printf '{"id":%s,"result":{"userAgent":"fixture"}}\n' "$id"
+            fi ;;
+        *'"method":"initialized"'*) ;;
+        *rateLimits*)
+            if [ "${AUB_CODEX_STUB_EXIT_ON_QUOTA:-0}" = 1 ]; then exit 79; fi
+            if [ "${AUB_CODEX_STUB_QUOTA_ONLY:-0}" = 1 ]; then
+                printf '%s\n' '{"method":"account/rateLimits/updated","params":{"rateLimits":{"primary":{"usedPercent":12}}}}'
+            fi
+            if [ "${AUB_CODEX_STUB_RECOVERED:-0}" = 1 ] || [ "${AUB_CODEX_STUB_QUOTA_ONLY:-0}" = 1 ]; then
+                printf '{"id":%s,"result":{"rateLimits":{"primary":{"usedPercent":12}}}}\n' "$id"
+            else
+                printf '{"id":%s,"error":{"code":-32603,"message":"failed to fetch codex rate limits: GET https://fixture.invalid/private-marker failed: 401 Unauthorized; content-type=application/json; body={\\"error\\":{\\"code\\":\\"token_expired\\",\\"message\\":\\"private-marker\\"}}"}}\n' "$id"
+            fi ;;
+        *usage*)
+            if [ "${AUB_CODEX_STUB_RECOVERED:-0}" = 1 ]; then
+                printf '{"id":%s,"result":{"summary":{"lifetimeTokens":34},"dailyUsageBuckets":[]}}\n' "$id"
+            else
+                printf '{"id":%s,"error":{"code":-32603,"message":"internal error private-marker"}}\n' "$id"
+            fi ;;
+        *) exit 65 ;;
+    esac
+done

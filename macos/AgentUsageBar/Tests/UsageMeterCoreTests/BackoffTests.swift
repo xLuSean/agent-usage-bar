@@ -28,6 +28,19 @@ struct BackoffTests {
         #expect(backoff.recordFailure() == 60)
     }
 
+    @Test("重新排程沿用原重試期限，校時或成功不會留下額外等待")
+    func remainingDelayUsesFailureTime() {
+        var backoff = RetryBackoff(policy: .codex)
+        let failedAt = Date()
+        #expect(backoff.remainingDelay(at: failedAt) == nil)
+        #expect(backoff.recordFailure(at: failedAt) == 60)
+        #expect(backoff.remainingDelay(at: failedAt.addingTimeInterval(23)) == 37)
+        #expect(backoff.remainingDelay(at: failedAt.addingTimeInterval(60)) == 0)
+        #expect(backoff.remainingDelay(at: failedAt.addingTimeInterval(-200)) == 0)
+        backoff.reset()
+        #expect(backoff.remainingDelay(at: failedAt) == nil)
+    }
+
 }
 
 @Suite("每個供應商各自的參數")

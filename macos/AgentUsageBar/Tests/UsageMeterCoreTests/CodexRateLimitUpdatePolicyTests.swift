@@ -102,6 +102,35 @@ struct CodexRateLimitUpdatePolicyTests {
         #expect(merged.codexAccountUsage == base.codexAccountUsage)
     }
 
+    @Test("部分更新保留時間窗長度及仍有效的重置時間")
+    func partialWindowPreservesCurrentResetAndDuration() throws {
+        let base = baseSnapshot()
+        let update = try CodexRateLimitDecoder.decode(
+            Data(#"{"rateLimits":{"primary":{"usedPercent":31}}}"#.utf8), fetchedAt: pushFetchedAt
+        )
+        let merged = try requireSnapshot(CodexRateLimitUpdatePolicy.applying(update, to: .current(base)))
+        #expect(merged.windows[0].used.usedPercent == 31)
+        #expect(merged.windows[0].resetsAt == base.windows[0].resetsAt)
+        #expect(merged.windows[0].durationMinutes == 300)
+        #expect(merged.windows[1] == base.windows[1])
+
+        let later = try CodexRateLimitDecoder.decode(
+            Data(#"{"rateLimits":{"primary":{"usedPercent":2}}}"#.utf8),
+            fetchedAt: try #require(base.windows[0].resetsAt)
+        )
+        let rolled = try requireSnapshot(CodexRateLimitUpdatePolicy.applying(later, to: .current(base)))
+        #expect(rolled.windows[0].resetsAt == nil)
+        #expect(rolled.windows[0].durationMinutes == 300)
+
+        let changed = try CodexRateLimitDecoder.decode(
+            Data(#"{"rateLimits":{"primary":{"usedPercent":5,"windowDurationMins":60}}}"#.utf8),
+            fetchedAt: pushFetchedAt
+        )
+        let newWindow = try requireSnapshot(CodexRateLimitUpdatePolicy.applying(changed, to: .current(base)))
+        #expect(newWindow.windows[0].durationMinutes == 60)
+        #expect(newWindow.windows[0].resetsAt == nil)
+    }
+
     @Test("推播真正提供的 metadata 會更新，新 window 依穩定 ID 附加")
     func providedMetadataAndNewWindowUpdate() throws {
         let scoped = window(kind: .weeklyScoped, used: 22, model: "Model A")

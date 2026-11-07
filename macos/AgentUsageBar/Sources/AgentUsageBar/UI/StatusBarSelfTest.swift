@@ -670,8 +670,150 @@ enum StatusBarSelfTest {
         for suite in [pathSuite, disableSuite, shutdownSuite] {
             UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
         }
+        await checkCodexDiagnosticHistory(check)
         print(failures == 0 ? "\nprovider transition selftest passed" : "\nprovider transition selftest FAILED: \(failures) items")
         return failures == 0 ? 0 : 1
+    }
+
+    private static func checkCodexDiagnosticHistory(_ check: (Bool, String) -> Void) async {
+        guard let fixture = ProcessInfo.processInfo.environment["AUB_CODEX_DIAGNOSTIC_FIXTURE"],
+              FileManager.default.isExecutableFile(atPath: fixture) else {
+            check(false, "Codex diagnostic test requires its executable fixture")
+            return
+        }
+        let suite = "AgentUsageBar.selftest.codex-errors.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer {
+            unsetenv("AUB_CODEX_STUB_RECOVERED")
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let english = Locale(identifier: "en_US")
+        for recovered in [false, true] {
+            setenv("AUB_CODEX_STUB_RECOVERED", recovered ? "1" : "0", 1)
+            let store = DiagnosticLogStore(defaults: defaults)
+            let presenter = ProviderPresenter(provider: .codex, snapshotStore: .init(defaults: defaults))
+            let model = AppModel(presenters: [presenter], diagnosticLogStore: store)
+            presenter.codexExecutablePath = { fixture }
+            presenter.settings.isEnabled = true
+            model.refreshAll()
+            let deadline = Date().addingTimeInterval(5)
+            var reports: [String] = []
+            repeat {
+                try? await Task.sleep(for: .milliseconds(20))
+                reports = model.diagnosticEntries.map { $0.copyText(locale: english) }
+            } while Date() < deadline && (reports.count != 2 || (recovered &&
+                !reports.allSatisfy { $0.contains("using a different background process") }))
+
+            check(reports.count == 2 && reports.contains { $0.contains("account/rateLimits/read") && $0.contains("HTTP 401") } &&
+                  reports.contains { $0.contains("account/usage/read") && $0.contains("no recognized cause") },
+                  "Settings receives each query's own sanitized failure")
+            if recovered {
+                check(reports.count == 2 && reports.allSatisfy { $0.contains("using a different background process") },
+                      "Successful reads after rebuilding the app model annotate both failures")
+                check(presenter.state.snapshot?.codexAccountUsage?.lifetimeTokens == 34,
+                      "The recovered token reading reaches the quota snapshot")
+            }
+            check(store.load() == model.diagnosticEntries, "The displayed diagnostics match persisted history")
+            if recovered {
+                do {
+                    let reading = try await CodexUsageProvider(configuredExecutablePath: fixture)
+                        .quotaReading(preserving: nil)
+                    if let query = reading.query {
+                        let afterRetention = Date().addingTimeInterval(6 * 86_400)
+                        model.recordCodexSuccess(query, now: afterRetention)
+                        check(store.load(now: afterRetention).isEmpty && model.diagnosticEntries.isEmpty,
+                              "Expired rows disappear from Settings on success without a new recovery")
+                    } else { check(false, "The synthetic read supplies its query context") }
+                } catch { check(false, "The isolated quota query succeeds for the retention check") }
+            }
+            await model.stop()
+        }
+        unsetenv("AUB_CODEX_STUB_RECOVERED")
+        await checkCodexTimers(fixture: fixture, check: check)
+        await checkCodexSourceChange(fixture: fixture, check: check)
+    }
+
+    private static func waitUntil(_ ready: () -> Bool) async -> Bool {
+        let deadline = ContinuousClock.now + .seconds(3)
+        while !ready() && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+        return ready()
+    }
+
+    private static func checkCodexTimers(fixture: String, check: (Bool, String) -> Void) async {
+        let suite = "AgentUsageBar.selftest.codex-timers.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UsageSnapshotStore(defaults: defaults)
+        let previous = transitionSnapshot(provider: .codex, sourcePath: .codexAppServer, usedPercent: 9)
+        store.save(previous)
+        var now = previous.fetchedAt.addingTimeInterval(60)
+        var timers: [(delay: TimeInterval, timer: Timer)] = []
+        let presenter = ProviderPresenter(provider: .codex, snapshotStore: store, now: { now }, scheduleTimer: { delay, action in
+            let timer = Timer(timeInterval: delay, repeats: false) { _ in MainActor.assumeIsolated { action() } }
+            timers.append((delay, timer))
+            return timer
+        })
+        let model = AppModel(presenters: [presenter], diagnosticLogStore: .init(defaults: defaults))
+        presenter.codexExecutablePath = { fixture }
+        presenter.settings.refreshInterval = .tenMinutes
+        presenter.codexTokenRefreshInterval = .oneHour
+        presenter.settings.isEnabled = true
+        presenter.requestRefresh(reason: .manual)
+        func tokenFailures() -> Int {
+            model.diagnosticEntries.filter { $0.copyText(locale: Locale(identifier: "en_US")).contains("account/usage/read") }.count
+        }
+        let started = await waitUntil { presenter.consecutiveFailures == 1 && tokenFailures() == 1 }
+        guard started, let quotaTimer = timers.last(where: { $0.delay == 60 && $0.timer.isValid })?.timer,
+              let tokenTimer = timers.last(where: { $0.delay == 3_600 && $0.timer.isValid })?.timer else {
+            check(false, "Both failed reads schedule their respective timers")
+            await model.stop()
+            return
+        }
+        now.addTimeInterval(60)
+        quotaTimer.fire()
+        check(await waitUntil { presenter.consecutiveFailures == 2 },
+              "The one-minute quota retry actually reads despite a fresh cached snapshot")
+        check(tokenFailures() == 1 && tokenTimer.isValid,
+              "A quota retry leaves the failed token read and its hourly timer alone")
+
+        presenter.settings.refreshInterval = .thirtyMinutes
+        check(presenter.nextAttemptAt == now.addingTimeInterval(120),
+              "Changing the regular quota interval keeps the pending retry deadline")
+        presenter.setPaused(true)
+        presenter.setPaused(false)
+        let resumed = await waitUntil { timers.contains { $0.delay == 3_540 && $0.timer.isValid } }
+        check(resumed && tokenFailures() == 1, "Resuming preserves the remaining token interval after failure")
+        now.addTimeInterval(3_540)
+        timers.last(where: { $0.delay == 3_540 && $0.timer.isValid })?.timer.fire()
+        check(await waitUntil { tokenFailures() == 2 }, "The independent token timer retries when its hour is due")
+        await model.stop()
+    }
+
+    private static func checkCodexSourceChange(fixture: String, check: (Bool, String) -> Void) async {
+        let suite = "AgentUsageBar.selftest.codex-source.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        setenv("AUB_CODEX_STUB_QUOTA_ONLY", "1", 1)
+        defer {
+            unsetenv("AUB_CODEX_STUB_QUOTA_ONLY")
+            defaults.removePersistentDomain(forName: suite)
+        }
+        SettingsStore.saveCodexExecutablePath("/synthetic/previous-codex")
+        let store = UsageSnapshotStore(defaults: defaults)
+        let old = transitionSnapshot(provider: .codex, sourcePath: .codexAppServer, usedPercent: 99)
+            .replacingCodexAccountUsage(.init(lifetimeTokens: 34_567, peakDailyTokens: nil, dailyUsageBuckets: [], fetchedAt: Date()))
+        store.save(old)
+        let presenter = ProviderPresenter(provider: .codex, snapshotStore: store)
+        let model = AppModel(presenters: [presenter], diagnosticLogStore: .init(defaults: defaults))
+        check(presenter.state.snapshot?.codexAccountUsage?.lifetimeTokens == 34_567, "The previous source has stored token usage")
+        model.setCodexExecutablePath(fixture)
+        check(presenter.state.snapshot == nil && store.load(.codex) == nil,
+              "Changing Codex source immediately removes the previous reading from the screen and storage")
+        let finished = await waitUntil {
+            presenter.state.snapshot?.representativeWindow?.used.usedPercent == 12 && !model.diagnosticEntries.isEmpty
+        }
+        check(finished && presenter.state.snapshot?.codexAccountUsage == nil && store.load(.codex)?.codexAccountUsage == nil,
+              "Successful quota and failed token reads on the new source cannot inherit the old source's tokens")
+        await model.stop()
     }
 }
 
