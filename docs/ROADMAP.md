@@ -4,7 +4,7 @@
 
 **產品與 UI**：Claude／Codex 雙量表、合併選單列圖示、popover 詳情、目前 Space 的設定視窗、內容超出螢幕時才捲動、中英文切換、登入時啟動與原創圖示均已完成並經使用者確認。視覺與互動契約見 [UI_SPEC.md](UI_SPEC.md)。
 
-**共用外框雙時間窗**：每家固定左 5 小時、右 7 天，合併圖像寬 57 pt；詳情保留缺值位置，Claude 合法缺列／空清單與 Codex 依期間分類、原始位置推播合併均已實作並通過本機完整驗證。仍待安裝後使用真實帳號驗收，範圍與證據見 [VERIFICATION.md](VERIFICATION.md) 的 2026-11-07 紀錄。
+**共用外框雙時間窗**：每家固定左 5 小時、右 7 天，合併圖像寬 57 pt；剩餘 10% 以下各自在半格內顯示剩餘數字與 `%`，Codex Token 區塊補上供應商名稱。詳情保留缺值位置，Claude 合法缺列／空清單與 Codex 依期間分類、原始位置推播合併均已實作並通過本機完整驗證。低額度數字仍待安裝後使用真實帳號驗收，範圍與證據見 [VERIFICATION.md](VERIFICATION.md) 的 2026-11-07 紀錄。
 
 **唯讀 providers**：Claude 只執行固定、shell-free 的 `/usage` CLI 查詢；Codex 只使用官方 App Server 的 rate-limit read 與更新通知。兩者各自設定、退避、保存最新讀數，任何一邊失敗不拖累另一邊。資料來源與格式漂移分別見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) 與 [CODEX_USAGE.md](CODEX_USAGE.md)，共用的安全邊界見 [SAFETY.md](SAFETY.md)。
 

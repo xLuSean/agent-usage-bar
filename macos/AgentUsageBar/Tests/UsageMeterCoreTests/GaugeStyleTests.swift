@@ -20,6 +20,67 @@ struct GaugeStyleTests {
         )
     }
 
+    func quotaSnapshot(
+        provider: ProviderKind, sessionUsed: Double, weeklyUsed: Double, now: Date
+    ) -> UsageSnapshot {
+        UsageSnapshot(
+            provider: provider, sourcePath: .fixture,
+            windows: [
+                UsageWindow(
+                    kind: .session, group: .session, used: UsedPercent(hundredScale: sessionUsed),
+                    resetsAt: now.addingTimeInterval(3_600), isActive: false,
+                    durationMinutes: provider == .codex ? 300 : nil
+                ),
+                UsageWindow(
+                    kind: .weeklyAll, group: .weekly, used: UsedPercent(hundredScale: weeklyUsed),
+                    resetsAt: now.addingTimeInterval(86_400), isActive: false,
+                    durationMinutes: provider == .codex ? 10_080 : nil
+                ),
+            ], fetchedAt: now
+        )
+    }
+
+    @Test("兩家兩個時間窗在剩餘 10% 以下顯示數字，含 0%", arguments: ProviderKind.allCases)
+    func lowQuotaBoundaries(provider: ProviderKind) {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let cases: [(Double, Int?)] = [(89, nil), (90, 10), (91, 9), (99, 1), (100, 0)]
+        for (used, remaining) in cases {
+            let base = quotaSnapshot(provider: provider, sessionUsed: used, weeklyUsed: used, now: now)
+            let model = GaugeStyleResolver.renderModel(provider: provider, state: .current(base), now: now)
+            #expect(model.session.lowRemainingPercent == remaining)
+            #expect(model.weekly.lowRemainingPercent == remaining)
+        }
+    }
+
+    @Test("低額度數字只切換自己的半格", arguments: ProviderKind.allCases)
+    func lowQuotaSlotsAreIndependent(provider: ProviderKind) {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let cases: [(Double, Double, Int?, Int?)] = [
+            (99, 62, 1, nil), (29, 91, nil, 9), (90, 99, 10, 1),
+        ]
+        for (sessionUsed, weeklyUsed, sessionRemaining, weeklyRemaining) in cases {
+            let base = quotaSnapshot(provider: provider, sessionUsed: sessionUsed, weeklyUsed: weeklyUsed, now: now)
+            let model = GaugeStyleResolver.renderModel(provider: provider, state: .current(base), now: now)
+            #expect(model.session.lowRemainingPercent == sessionRemaining)
+            #expect(model.weekly.lowRemainingPercent == weeklyRemaining)
+        }
+    }
+
+    @Test("過期與限流讀數不以數字掩蓋狀態，更新中保留可信數字", arguments: ProviderKind.allCases)
+    func lowQuotaHonorsDataState(provider: ProviderKind) {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let base = quotaSnapshot(provider: provider, sessionUsed: 99, weeklyUsed: 100, now: now)
+        for state in [UsageDisplayState.stale(base, reason: .offline),
+                      .throttled(previous: base, until: now.addingTimeInterval(60)), .starting] {
+            let model = GaugeStyleResolver.renderModel(provider: provider, state: state, now: now)
+            #expect(model.session.lowRemainingPercent == nil)
+            #expect(model.weekly.lowRemainingPercent == nil)
+        }
+        let refreshing = GaugeStyleResolver.renderModel(provider: provider, state: .refreshing(previous: base), now: now)
+        #expect(refreshing.session.lowRemainingPercent == 1)
+        #expect(refreshing.weekly.lowRemainingPercent == 0)
+    }
+
     /// The server's own verdict is coarser than the number: it called a window at 58%
     /// consumed "normal", which painted a half-spent bar green while the label beside
     /// it read 58%. Colour now follows the figure so the two cannot disagree.
@@ -115,12 +176,16 @@ struct GaugeStyleTests {
         let model = GaugeStyleResolver.renderModel(provider: .claude, state: .current(base))
         #expect(model.session.availability == .reported)
         #expect(model.session.fillFraction == 0)
+        #expect(model.session.lowRemainingPercent == nil)
         #expect(model.weekly.availability == .unknown)
         #expect(model.weekly.fillLevel == .unknown)
+        #expect(model.weekly.lowRemainingPercent == nil)
         let noSession = UsageSnapshot(provider: .claude, sourcePath: .claudeCodeCLI, windows: [], fetchedAt: Date(), claudeLimitListReported: true)
         let absent = GaugeStyleResolver.renderModel(provider: .claude, state: .current(noSession))
         #expect(absent.session.availability == .notListed)
         #expect(absent.weekly.availability == .notListed)
+        #expect(absent.session.lowRemainingPercent == nil)
+        #expect(absent.weekly.lowRemainingPercent == nil)
         #expect(!absent.accessibilityLabel.contains("0%"))
     }
 
@@ -138,12 +203,14 @@ struct GaugeStyleTests {
         let now = Date(timeIntervalSince1970: 1_000_000)
         let windows = [
             UsageWindow(kind: .session, group: .session, used: UsedPercent(hundredScale: 91), resetsAt: now.addingTimeInterval(-61), isActive: false),
-            UsageWindow(kind: .weeklyAll, group: .weekly, used: UsedPercent(hundredScale: 30), resetsAt: now.addingTimeInterval(3_600), isActive: false),
+            UsageWindow(kind: .weeklyAll, group: .weekly, used: UsedPercent(hundredScale: 99), resetsAt: now.addingTimeInterval(3_600), isActive: false),
         ]
         let base = UsageSnapshot(provider: .claude, sourcePath: .fixture, windows: windows, fetchedAt: now)
         let model = GaugeStyleResolver.renderModel(provider: .claude, state: .current(base), now: now)
         #expect(model.session.frameStyle == .staleMarked)
         #expect(model.weekly.frameStyle == .solid)
+        #expect(model.session.lowRemainingPercent == nil)
+        #expect(model.weekly.lowRemainingPercent == 1)
         #expect(model.accessibilityLabel.contains("past reset"))
     }
 

@@ -183,7 +183,7 @@ private struct ProviderSection: View {
     private func codexTokenUsageSection(snapshot: UsageSnapshot) -> some View {
         Divider()
         VStack(alignment: .leading, spacing: 8) {
-            Text(language.text(chinese: "帳號 Token 用量", english: "Account token usage"))
+            Text(language.text(chinese: "Codex 帳號 Token 用量", english: "Codex account token usage"))
                 .font(.callout)
                 .bold()
 

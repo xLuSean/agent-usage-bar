@@ -368,13 +368,24 @@ enum StatusBarSelfTest {
                 }, "\(description): AppKit allocates the complete image plus padding")
             }
             checkImageLayout(layout == .separate ? [27, 27] : [57], "Mixed low-quota layout")
+            claude.applyDemoScenario(.lowWeekly)
+            codex.applyDemoScenario(.bothLow)
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Weekly and both-window percentages preserve fixed width")
+            check(claude.renderModel.session.lowRemainingPercent == nil && claude.renderModel.weekly.lowRemainingPercent == 9,
+                  "Only the low weekly half switches to a percentage")
+            check(codex.renderModel.session.lowRemainingPercent == 1 && codex.renderModel.weekly.lowRemainingPercent == 10,
+                  "Both low windows show their own remaining percentages, including 10%")
             claude.applyDemoScenario(.lastPercent)
             codex.applyDemoScenario(.exhausted)
             checkImageLayout(layout == .separate ? [27, 27] : [57], "Both low, including exhausted quota")
-            check(codex.renderModel.session.fillLevel == .exhausted, "Exhausted quota keeps its explicit red slash")
+            check(codex.renderModel.session.lowRemainingPercent == 0 && codex.renderModel.weekly.lowRemainingPercent == 0,
+                  "Exhausted current windows show 0% remaining")
             claude.applyDemoScenario(.lowQuotaBoundary)
             codex.applyDemoScenario(.lowQuotaBoundary)
             checkImageLayout(layout == .separate ? [27, 27] : [57], "Quota recovery preserves fixed width")
+            claude.applyDemoScenario(.healthy)
+            codex.applyDemoScenario(.healthy)
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Healthy bars return without changing width")
             claude.applyDemoScenario(.missingSession)
             codex.applyDemoScenario(.missingWeekly)
             checkImageLayout(layout == .separate ? [27, 27] : [57], "Missing quota preserves both fixed slots")

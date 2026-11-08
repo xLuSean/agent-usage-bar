@@ -13,6 +13,8 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
     case noLimits
     case refreshing
     case lowSession
+    case lowWeekly
+    case bothLow
     case lowQuotaBoundary
     case lastPercent
     case exhausted
@@ -34,6 +36,8 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
         case .noLimits: "Service listed no limits"
         case .refreshing: "Refreshing (showing previous data)"
         case .lowSession: "5h nearly exhausted (9% remaining)"
+        case .lowWeekly: "Week nearly exhausted (9% remaining)"
+        case .bothLow: "Both low (5h 1%, week 10% remaining)"
         case .lowQuotaBoundary: "Low quota (10% remaining)"
         case .lastPercent: "Last percent (1% remaining)"
         case .exhausted: "Exhausted (100%)"
@@ -76,12 +80,16 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
             ))
         case .lowSession:
             return .current(Self.snapshot(sessionUsed: 91, weeklyUsed: 74, now: now, provider: provider))
+        case .lowWeekly:
+            return .current(Self.snapshot(sessionUsed: 29, weeklyUsed: 91, now: now, provider: provider))
+        case .bothLow:
+            return .current(Self.snapshot(sessionUsed: 99, weeklyUsed: 90, now: now, provider: provider))
         case .lowQuotaBoundary:
-            return .current(Self.snapshot(sessionUsed: 90, weeklyUsed: 74, now: now, provider: provider))
+            return .current(Self.snapshot(sessionUsed: 90, weeklyUsed: 90, now: now, provider: provider))
         case .lastPercent:
-            return .current(Self.snapshot(sessionUsed: 99, weeklyUsed: 74, now: now, provider: provider))
+            return .current(Self.snapshot(sessionUsed: 99, weeklyUsed: 99, now: now, provider: provider))
         case .exhausted:
-            return .current(Self.snapshot(sessionUsed: 100, weeklyUsed: 91, now: now, provider: provider))
+            return .current(Self.snapshot(sessionUsed: 100, weeklyUsed: 100, now: now, provider: provider))
         case .stale:
             return .stale(
                 Self.snapshot(

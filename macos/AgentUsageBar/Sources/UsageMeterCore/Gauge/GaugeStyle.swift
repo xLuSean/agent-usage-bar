@@ -48,6 +48,15 @@ public struct GaugeWindowRenderModel: Sendable, Hashable {
     public let frameStyle: GaugeFrameStyle
     public let fillFraction: Double
     public let availability: Availability
+
+    /// Each current window switches independently to its remaining percentage at
+    /// 10% or less. Preserve stale/throttled artwork so a number cannot hide state.
+    public var lowRemainingPercent: Int? {
+        guard availability == .reported, frameStyle == .solid,
+              fillFraction.isFinite, (0...1).contains(fillFraction) else { return nil }
+        let remaining = 100 - Int((fillFraction * 100).rounded())
+        return remaining <= 10 ? remaining : nil
+    }
 }
 
 /// One provider, one shared frame, two fixed slots. Neither slot falls back to the

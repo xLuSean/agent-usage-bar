@@ -147,14 +147,21 @@ enum GaugeContactSheet {
 
     /// A compact, synthetic-only view of the production renderer at 1x and 2.5x.
     private static func writeLowQuotaPreview(to url: URL) throws {
-        let image = NSImage(size: NSSize(width: 720, height: 230), flipped: true) { _ in
+        let image = NSImage(size: NSSize(width: 720, height: 440), flipped: true) { _ in
             NSColor.white.setFill()
-            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 720, height: 230)).fill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 720, height: 440)).fill()
             drawText("Synthetic data · production renderer · 1x / 2.5x", at: NSPoint(x: 16, y: 10), color: .black)
-            for (index, title) in ["9% remaining", "0% remaining", "Combined: 9% + 1%"].enumerated() {
-                drawText(title, at: NSPoint(x: 16 + CGFloat(index) * 232, y: 34), bold: true, color: .black)
-            }
-            for (dark, rowTop) in [(false, CGFloat(56)), (true, CGFloat(142))] {
+            let rows: [(Bool, CGFloat)] = [(false, 54), (true, 140), (false, 266), (true, 352)]
+            for (row, (dark, rowTop)) in rows.enumerated() {
+                let secondGroup = row >= 2
+                if !dark {
+                    let titles = secondGroup
+                        ? ["Both: 10% remaining", "Both: 0% remaining", "Combined: week 9% / 1%+10%"]
+                        : ["5h: 9% remaining", "Week: 9% remaining", "Both: 5h 1%, week 10%"]
+                    for (index, title) in titles.enumerated() {
+                        drawText(title, at: NSPoint(x: 16 + CGFloat(index) * 232, y: rowTop - 22), bold: true, color: .black)
+                    }
+                }
                 let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
                 (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.97, alpha: 1)).setFill()
                 NSBezierPath(rect: NSRect(x: 8, y: rowTop, width: 704, height: 82)).fill()
@@ -163,12 +170,16 @@ enum GaugeContactSheet {
                         (GaugeStyleResolver.renderModel(provider: provider, state: scenario.state(provider: provider)),
                          SettingsStore.defaultColor(for: provider).nsColor)
                     }
-                    let codex = entry(.codex, .lowSession)
-                    let exhausted = entry(.claude, .exhausted)
-                    let images = [
-                        GaugeImageRenderer.image(for: codex.model, identityColor: codex.identityColor),
-                        GaugeImageRenderer.image(for: exhausted.model, identityColor: exhausted.identityColor),
-                        GaugeImageRenderer.combinedImage(for: [entry(.claude, .lowSession), entry(.codex, .lastPercent)]),
+                    func single(_ provider: ProviderKind, _ scenario: DemoScenario) -> NSImage {
+                        let value = entry(provider, scenario)
+                        return GaugeImageRenderer.image(for: value.model, identityColor: value.identityColor)
+                    }
+                    let images = secondGroup ? [
+                        single(.claude, .lowQuotaBoundary),
+                        single(.codex, .exhausted),
+                        GaugeImageRenderer.combinedImage(for: [entry(.claude, .lowWeekly), entry(.codex, .bothLow)]),
+                    ] : [
+                        single(.codex, .lowSession), single(.claude, .lowWeekly), single(.codex, .bothLow),
                     ]
                     for (index, badge) in images.enumerated() {
                         let x = 16 + CGFloat(index) * 232

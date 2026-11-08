@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import UsageMeterCore
 
 /// Draws the menu bar gauge.
@@ -91,7 +92,11 @@ enum GaugeImageRenderer {
                 NSColor.secondaryLabelColor.setStroke()
                 slash.stroke()
             case .reported:
-                drawFill(model: segment, in: rect)
+                if let remaining = segment.lowRemainingPercent {
+                    drawRemainingBadge(remaining, in: rect)
+                } else {
+                    drawFill(model: segment, in: rect)
+                }
                 if segment.frameStyle == .staleMarked && model.frameStyle != .staleMarked {
                     drawStaleMark(near: rect)
                 }
@@ -101,6 +106,51 @@ enum GaugeImageRenderer {
         if model.frameStyle == .staleMarked {
             drawStaleMark(near: frameRect)
         }
+    }
+
+    /// Stack the number and percent sign inside the existing half. The frame,
+    /// divider and provider letter stay fixed even when both windows are low.
+    private static func drawRemainingBadge(_ remaining: Int, in rect: NSRect) {
+        NSColor.systemRed.withAlphaComponent(0.20).setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 1, yRadius: 1).fill()
+
+        let content = rect.insetBy(dx: 0, dy: -0.5)
+        let percentHeight: CGFloat = 4.5
+        let gap: CGFloat = 1
+        let numberRect = NSRect(
+            x: content.minX, y: content.minY + percentHeight + gap,
+            width: content.width, height: content.height - percentHeight - gap
+        )
+        let percentRect = NSRect(
+            x: content.minX, y: content.minY,
+            width: content.width, height: percentHeight
+        )
+        drawBadgeText(String(remaining), fontSize: 10, in: numberRect)
+        drawBadgeText("%", fontSize: 6, in: percentRect)
+    }
+
+    /// Fit glyph ink, rather than font line-height padding, to a narrow half.
+    private static func drawBadgeText(_ value: String, fontSize: CGFloat, in rect: NSRect) {
+        func line(at size: CGFloat) -> CTLine {
+            CTLineCreateWithAttributedString(NSAttributedString(string: value, attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: size, weight: .semibold),
+                .foregroundColor: NSColor.labelColor,
+            ]))
+        }
+        var text = line(at: fontSize)
+        var ink = CTLineGetBoundsWithOptions(text, .useGlyphPathBounds)
+        guard ink.width > 0, ink.height > 0,
+              let context = NSGraphicsContext.current?.cgContext else { return }
+        let scale = min(1, rect.width / ink.width, rect.height / ink.height)
+        if scale < 1 {
+            text = line(at: fontSize * scale)
+            ink = CTLineGetBoundsWithOptions(text, .useGlyphPathBounds)
+        }
+        context.saveGState()
+        defer { context.restoreGState() }
+        context.textMatrix = .identity
+        context.textPosition = CGPoint(x: rect.midX - ink.midX, y: rect.midY - ink.midY)
+        CTLineDraw(text, context)
     }
 
     private static func drawGlyph(_ glyph: String, color: NSColor) {

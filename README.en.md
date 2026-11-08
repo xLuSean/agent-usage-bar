@@ -38,11 +38,9 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 
 Each provider has one shared rectangular gauge, divided into **five hours on the left and seven days on the right**. Fill height represents the percentage already used. Each provider stays at 27 × 18 pt, and the combined image is 57 × 18 pt. Click it to see detailed values for each usage window.
 
-Both providers already report “percentage used.” Converting that value again would only add confusion, so the number and the gauge communicate the same thing.
-
 - The **outline color** identifies the provider and can be customized.
-- The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and a red slash at 100%) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
-- **Low quota keeps the same width.** Red indicates a near-exhausted window; a red slash indicates exhaustion. Used and remaining percentages for both windows are in the tooltip, VoiceOver label, and popover. A grey dash means no reading; a grey slash means Claude did not list that limit. Neither means 0% used.
+- The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and exhaustion at 100%) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
+- **At 10% remaining or less, each window shows its remaining percentage**, including 10% and an exhausted 0%. The number and percent sign are stacked inside that window's existing half, keeping the width fixed. Stale and rate-limited readings retain their status artwork. Used and remaining percentages are also in the tooltip, VoiceOver label, and popover. A grey dash means no reading; a grey slash means Claude did not list that limit. Neither means 0% used.
 - The **letter on the left** (`C` / `X`) is a second identity cue that does not depend on color, so the providers remain distinguishable for color-blind users or when similar outline colors are selected.
 
 When a provider **explicitly reports failure**, the app never presents old data as current. If a previous value exists, it is marked Stale with its fetch time; without trustworthy data, the app shows Unavailable. The design rule is that **unknown is never drawn as 0%**. The Codex decoder rejects out-of-range or non-integer percentages instead of clamping malformed input into a plausible-looking 0 or 100.

@@ -53,6 +53,10 @@
 
 這裡保留行為與驗證結果，不引用公開前的內部 commit hash。公開基線以可重跑的 `./scripts/verify.sh`、現行 source 與測試作為長期證據。
 
+2026-11-07，低額度數字與供應商標題：Claude／Codex 的 5 小時與一般週額度各自以剩餘整數百分比判斷，10% 以下（含 10%）在原半格內改為「數字在上、% 在下」，耗盡顯示 0%；缺值、過期、超過 reset 與限流維持原本狀態標記，不以數字掩蓋。兩半可同時顯示不同剩餘值，每家 27 × 18 pt／合併 57 × 18 pt 不變。Codex Token 區塊標題補上供應商名稱，提供英文與繁中版本。
+
+`swift test --filter GaugeStyleTests` 通過 **19 項／2 suites**；完整 `./scripts/verify.sh` 通過 **279 項／26 suites**、Debug／Release Xcode builds、隔離 AppKit 固定寬度／低額度切換檢查、雙語繪製、packaging／release fixtures、正式設定未變動與全部靜態護欄。另檢視正式繪圖器產生的原尺寸／放大深淺色圖，包含週額度 9%、兩窗 1%／10%、兩窗 10%、兩窗 0% 與合併版面，並確認合併面板顯示「Codex account token usage」。未執行真實 provider，未替換使用者已安裝的 App；這輪低額度數字的真實選單列驗收仍待安裝候選版後確認。
+
 2026-11-07，共用外框雙時間窗：每家固定 27 × 18 pt，左 5 小時、右所有模型的 7 天，中間一條分隔線；兩家合併圖像固定 57 × 18 pt，低額度不再改成數字徽章或改變寬度。詳情固定保留兩列，0%、尚無資料與 Claude 清單未列出限制保持不同語意。Claude 保留既有固定 `/usage` 指令，只在沒有報告時讀文字；null 清單仍失敗，合法空／部分清單不再以文字補齊，移除「目前綁定」標記。Codex 依實際期間選擇固定窗，原始 `sourceSlot` 用於局部推播合併，涵蓋主要窗是週額度及推播省略期間的情境。新欄位保持舊快照可讀，額外檢查非正期間、重複身分與來源位置。
 
 最終 `./scripts/verify.sh` 通過 **276 項／26 suites**、Debug／Release Xcode builds、隔離 AppKit diagnostics、雙語介面繪製、固定寬度與缺列自我測試、packaging／release fixtures、正式設定未變動及全部靜態護欄。另檢視正式繪圖器產生的深淺色原尺寸／放大圖、缺列情境與合併面板；對照圖裁切已修正。輸出 `dist/gauges.png`、`dist/gauges.low-quota.png`、`dist/ui.png`、`dist/ui.combined-dark.png` 及雙語設定圖。未執行真實 provider、未安裝或建立候選 DMG；原始 Codex 缺列現象尚未在真實帳號重現，仍需安裝後核對來源讀數與顯示結果。
