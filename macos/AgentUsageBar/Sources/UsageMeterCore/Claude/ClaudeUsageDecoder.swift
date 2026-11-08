@@ -39,7 +39,7 @@ import Foundation
 /// |---|---|
 /// | no report | reads the prose: an older CLI, or a sign-in the report is not offered for |
 /// | no report, and prose that is only the cost summary | fails with `claudeNotSignedIn` |
-/// | a report with no rows | fails with `claudeUsageUnavailable`; the prose is **not** consulted |
+/// | a report with null rows | fails with `claudeUsageUnavailable`; the prose is **not** consulted |
 /// | a report with rows | reads the rows |
 ///
 /// The third case is the point. Falling back to the prose there would turn "the lookup
@@ -49,8 +49,8 @@ import Foundation
 /// The second case is a lost sign-in that still exits 0 with `success`. See
 /// `ClaudeUsageTextDecoder.isSignedOutCostSummary` for the exact shape accepted.
 ///
-/// The report is documented as experimental, so its absence alone is never an error and
-/// the two rows this app depends on are read strictly. See `ClaudeUsageReportDecoder`.
+/// The report is documented as experimental, so its absence alone is never an error.
+/// Every present general meter is validated strictly; omitted meters stay absent.
 public enum ClaudeUsageDecoder {
 
     public static func decode(
@@ -71,9 +71,9 @@ public enum ClaudeUsageDecoder {
         }
 
         let windows: [UsageWindow]
-        if let rows = try output.reportRows(),
-           let reported = try ClaudeUsageReportDecoder.windows(from: rows, now: now) {
-            windows = reported
+        let reportedRows = try output.reportRows()
+        if let rows = reportedRows {
+            windows = try ClaudeUsageReportDecoder.windows(from: rows, now: now)
         } else if output.report == nil,
                   let text = output.result["result"] as? String,
                   ClaudeUsageTextDecoder.isSignedOutCostSummary(text) {
@@ -84,9 +84,8 @@ public enum ClaudeUsageDecoder {
             // report means the server answered, so the sign-in was working.
             throw UsageError.claudeNotSignedIn
         } else {
-            // Either no report was attached, or it has rows but not both meters this
-            // app is built on. In the second case the server did answer, so the prose
-            // beside it is as fresh as the rows are.
+            // Only an absent report permits the legacy prose fallback. A present list
+            // is authoritative about which meters were reported, including none.
             windows = try proseWindows(in: output.result, timeZone: timeZone, now: now)
         }
 
@@ -119,7 +118,8 @@ public enum ClaudeUsageDecoder {
             sourcePath: .claudeCodeCLI,
             windows: windows,
             fetchedAt: now,
-            sourceVersion: ProviderMetadataText.normalizedDisplay(sourceVersion)
+            sourceVersion: ProviderMetadataText.normalizedDisplay(sourceVersion),
+            claudeLimitListReported: reportedRows == nil ? nil : true
         )
     }
 
@@ -207,11 +207,7 @@ public enum ClaudeUsageDecoder {
             guard let rows = limits as? [Any] else {
                 throw UsageError.schemaChanged("Unreadable usage report")
             }
-            // An empty list is the server reporting that no meter applies. That is not
-            // a state this app can draw, and it is not a reason to trust the prose.
-            guard !rows.isEmpty else {
-                throw UsageError.schemaChanged("The usage report contains no limit rows")
-            }
+            // [] explicitly reports no meters; null means no reading was obtained.
             return rows
         }
     }

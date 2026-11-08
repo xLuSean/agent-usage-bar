@@ -131,6 +131,23 @@ struct CodexRateLimitUpdatePolicyTests {
         #expect(newWindow.windows[0].resetsAt == nil)
     }
 
+    @Test("primary 是週窗時，缺少期間的推播仍只更新週窗")
+    func sparsePushUsesWireSlotAfterDurationReordering() throws {
+        let base = try CodexRateLimitDecoder.decode(
+            Data(#"{"rateLimits":{"primary":{"usedPercent":51,"windowDurationMins":10080},"secondary":{"usedPercent":12,"windowDurationMins":300}}}"#.utf8),
+            fetchedAt: baseFetchedAt
+        )
+        let update = try CodexRateLimitDecoder.decode(
+            Data(#"{"rateLimits":{"primary":{"usedPercent":55}}}"#.utf8),
+            fetchedAt: pushFetchedAt
+        )
+        let merged = try requireSnapshot(CodexRateLimitUpdatePolicy.applying(update, to: .current(base)))
+        #expect(merged.windows.count == 2)
+        #expect(merged.quotaWindow(for: .session)?.used.usedPercent == 12)
+        #expect(merged.quotaWindow(for: .weeklyAll)?.used.usedPercent == 55)
+        #expect(merged.fetchedAt == baseFetchedAt)
+    }
+
     @Test("推播真正提供的 metadata 會更新，新 window 依穩定 ID 附加")
     func providedMetadataAndNewWindowUpdate() throws {
         let scoped = window(kind: .weeklyScoped, used: 22, model: "Model A")
@@ -152,6 +169,15 @@ struct CodexRateLimitUpdatePolicyTests {
         #expect(merged.rateLimitReachedType == "primary")
         #expect(merged.spendControlReached == true)
         #expect(merged.sourceVersion == "codex-cli/0.2")
+    }
+
+    @Test("推播有重複來源位置時忽略，不任選一個百分比")
+    func ignoresAmbiguousWireIdentity() {
+        let update = sparseUpdate(windows: [
+            window(kind: .session, used: 31),
+            window(kind: .session, used: 99, model: "Another label"),
+        ])
+        #expect(CodexRateLimitUpdatePolicy.applying(update, to: .current(baseSnapshot())) == nil)
     }
 
     @Test("合併保留 current、stale、refreshing 與 throttled 的狀態語意")

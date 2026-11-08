@@ -6,7 +6,6 @@
 "General" = "一般";
 "Launch at Login" = "登入時自動啟動";
 "Menu Bar Layout" = "選單列排列";
-"Draws both gauges in one icon, using about half the width. Each provider keeps its letter and outline color, so they remain distinguishable. Use this when menu bar space is limited." = "兩個量表畫在同一個圖示裡，佔用寬度減半。字母與外框顏色都保留，仍分得出誰是誰。選單列空間不足時用這個。";
 "Layout" = "版面";
 "The outline color identifies the provider, while the fill height shows the percentage used. The letter is a second, color-independent cue for color-vision differences or similar outline colors." = "外框顏色代表是哪個供應商，內部填色高度代表已用比例。字母是不依賴顏色的第二個線索，色覺障礙或兩色相近時仍分得出來。";
 "When both providers are disabled, a neutral menu bar icon remains as an entry point so you can reopen Settings." = "兩個供應商都關閉時，選單列會保留一個中性圖示作為入口，否則就再也打不開這個設定視窗了。";
@@ -25,7 +24,6 @@
 "Copy Claude Code recovery command" = "複製 Claude Code 修復指令";
 "Recovery command copied" = "已複製修復指令";
 "No trustworthy usage data is currently available." = "目前沒有可信的額度資料。";
-"Currently binding" = "目前綁定";
 "The values below are from the last successful query, not the current values." = "以下數字為最後一次成功查詢的結果，不是現在的值。";
 "Claude Code Executable" = "Claude Code 執行檔";
 "Command Run" = "實際執行的指令";

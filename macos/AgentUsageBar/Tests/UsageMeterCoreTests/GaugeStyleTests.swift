@@ -49,16 +49,17 @@ struct GaugeStyleTests {
     @Test("未知資料絕不畫成 0%")
     func unknownIsNotZero() {
         let unavailable = GaugeStyleResolver.renderModel(provider: .claude, state: .unavailable(.claudeNotSignedIn))
-        #expect(unavailable.fillLevel == .unknown)
+        #expect(unavailable.session.fillLevel == .unknown)
+        #expect(unavailable.weekly.fillLevel == .unknown)
         #expect(unavailable.frameStyle == .dashedEmpty)
 
         let exhausted = GaugeStyleResolver.renderModel(
             provider: .claude,
             state: .current(snapshot(window(used: 100)))
         )
-        #expect(exhausted.fillLevel == .exhausted)
+        #expect(exhausted.session.fillLevel == .exhausted)
         // Unknown and exhausted must not share a look.
-        #expect(unavailable.fillLevel != exhausted.fillLevel)
+        #expect(unavailable.session.fillLevel != exhausted.session.fillLevel)
         #expect(unavailable.frameStyle != exhausted.frameStyle)
     }
 
@@ -87,40 +88,63 @@ struct GaugeStyleTests {
             provider: .claude,
             state: .current(snapshot(window(used: 29)))
         )
-        #expect(model.fillFraction == 0.29)
+        #expect(model.session.fillFraction == 0.29)
     }
 
-    @Test("低額度徽章顯示剩餘整數，10% 邊界與四捨五入一致")
-    func lowRemainingPercentBoundaries() {
-        let cases: [(Double, Int?)] = [
-            (0, nil), (89, nil), (90, nil), (90.49, nil), (90.5, 9),
-            (91, 9), (92, 8), (99, 1), (99.5, 0), (100, 0),
+    @Test("兩個量表獨立，不把模型週額度或官方代表項目放進另一半")
+    func independentQuotaSlots() {
+        let windows = [
+            UsageWindow(kind: .weeklyScoped, group: .weekly, used: UsedPercent(hundredScale: 99), resetsAt: nil, isActive: true, modelDisplayName: "Example"),
+            UsageWindow(kind: .weeklyAll, group: .weekly, used: UsedPercent(hundredScale: 68), resetsAt: nil, isActive: false),
+            window(used: 28),
         ]
-        for provider in ProviderKind.allCases {
-            for (used, expected) in cases {
-                let model = GaugeStyleResolver.renderModel(
-                    provider: provider, state: .current(snapshot(window(used: used)))
-                )
-                #expect(model.lowRemainingPercent == expected)
-            }
-        }
+        let snapshot = UsageSnapshot(provider: .claude, sourcePath: .fixture, windows: windows, fetchedAt: Date())
+        let model = GaugeStyleResolver.renderModel(provider: .claude, state: .current(snapshot))
+        #expect(model.session.fillFraction == 0.28)
+        #expect(model.session.fillLevel == .ok)
+        #expect(model.weekly.fillFraction == 0.68)
+        #expect(model.weekly.fillLevel == .caution)
+        #expect(model.accessibilityLabel.contains("28% used"))
+        #expect(model.accessibilityLabel.contains("68% used"))
+        #expect(!model.accessibilityLabel.contains("99%"))
     }
 
-    @Test("低額度更新沿用數字，過期、限流與未知仍保留狀態圖示")
-    func lowQuotaDoesNotHideDataState() {
-        let base = snapshot(window(used: 91))
-        let refreshing = GaugeStyleResolver.renderModel(provider: .claude, state: .refreshing(previous: base))
-        #expect(refreshing.lowRemainingPercent == 9)
-        let states: [UsageDisplayState] = [
-            .starting, .refreshing(previous: nil), .unavailable(.offline),
-            .stale(base, reason: .offline),
-            .throttled(previous: base, until: base.fetchedAt.addingTimeInterval(60)),
-            .throttled(previous: nil, until: base.fetchedAt.addingTimeInterval(60)),
-            .current(UsageSnapshot(provider: .claude, sourcePath: .fixture, windows: [], fetchedAt: base.fetchedAt)),
+    @Test("0%、未回報與官方未列出限制是不同狀態")
+    func zeroMissingAndNotListedAreDistinct() {
+        let base = snapshot(window(used: 0))
+        let model = GaugeStyleResolver.renderModel(provider: .claude, state: .current(base))
+        #expect(model.session.availability == .reported)
+        #expect(model.session.fillFraction == 0)
+        #expect(model.weekly.availability == .unknown)
+        #expect(model.weekly.fillLevel == .unknown)
+        let noSession = UsageSnapshot(provider: .claude, sourcePath: .claudeCodeCLI, windows: [], fetchedAt: Date(), claudeLimitListReported: true)
+        let absent = GaugeStyleResolver.renderModel(provider: .claude, state: .current(noSession))
+        #expect(absent.session.availability == .notListed)
+        #expect(absent.weekly.availability == .notListed)
+        #expect(!absent.accessibilityLabel.contains("0%"))
+    }
+
+    @Test("舊 Codex 快照的主要窗若是週額度，只能進入右半")
+    func legacyCodexDurationWinsOverPosition() {
+        let legacy = UsageWindow(kind: .session, group: .session, used: UsedPercent(hundredScale: 51), resetsAt: nil, isActive: true, durationMinutes: 10_080)
+        let base = UsageSnapshot(provider: .codex, sourcePath: .codexAppServer, windows: [legacy], fetchedAt: Date())
+        let model = GaugeStyleResolver.renderModel(provider: .codex, state: .current(base))
+        #expect(model.session.availability == .unknown)
+        #expect(model.weekly.fillFraction == 0.51)
+    }
+
+    @Test("個別時間窗過了重設時間只降低該半邊的可信度")
+    func resetBoundariesAreIndependent() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        let windows = [
+            UsageWindow(kind: .session, group: .session, used: UsedPercent(hundredScale: 91), resetsAt: now.addingTimeInterval(-61), isActive: false),
+            UsageWindow(kind: .weeklyAll, group: .weekly, used: UsedPercent(hundredScale: 30), resetsAt: now.addingTimeInterval(3_600), isActive: false),
         ]
-        for state in states {
-            #expect(GaugeStyleResolver.renderModel(provider: .claude, state: state).lowRemainingPercent == nil)
-        }
+        let base = UsageSnapshot(provider: .claude, sourcePath: .fixture, windows: windows, fetchedAt: now)
+        let model = GaugeStyleResolver.renderModel(provider: .claude, state: .current(base), now: now)
+        #expect(model.session.frameStyle == .staleMarked)
+        #expect(model.weekly.frameStyle == .solid)
+        #expect(model.accessibilityLabel.contains("past reset"))
     }
 
     @Test("VoiceOver 標籤在每種狀態下都說得出發生什麼事")
@@ -187,7 +211,7 @@ struct RepresentativeWindowTests {
         ])
         #expect(snap.representativeWindow?.kind == .session)
         #expect(snap.representativeWindow?.used.usedPercent == 30)
-        #expect(GaugeStyleResolver.renderModel(provider: .claude, state: .current(snap)).lowRemainingPercent == nil)
+        #expect(GaugeStyleResolver.renderModel(provider: .claude, state: .current(snap)).session.fillFraction == 0.30)
     }
 
     @Test("沒有 5 小時窗時退回綁定的那個")

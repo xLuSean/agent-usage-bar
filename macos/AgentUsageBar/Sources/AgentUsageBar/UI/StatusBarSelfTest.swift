@@ -301,8 +301,9 @@ enum StatusBarSelfTest {
         let codex = model.presenter(for: .codex)!
         claude.applyDemoScenario(.notLoggedIn)
         codex.applyDemoScenario(.healthy)
-        check(claude.renderModel.fillLevel == .unknown, "Claude gauge is unknown when unavailable")
-        check(codex.renderModel.fillLevel == .ok, "Codex remains ok when Claude fails")
+        check(claude.renderModel.session.fillLevel == .unknown && claude.renderModel.weekly.fillLevel == .unknown,
+              "Both Claude slots are unknown when unavailable")
+        check(codex.renderModel.session.fillLevel == .ok, "Codex remains ok when Claude fails")
 
         // Deadlock guard: turning everything off must leave a way back in.
         for presenter in model.presenters { presenter.settings.isEnabled = false }
@@ -352,8 +353,7 @@ enum StatusBarSelfTest {
         controller.synchronize()
         check(controller.diagnostics.allSatisfy { $0.exists }, "Separate items return after switching back")
 
-        // The number badge changes image width. Prove real status items grow and
-        // shrink on updates, including a mixed combined image and quota reset.
+        // Crossing a low-quota boundary must never widen the shared-frame icon.
         for layout in [MenuBarLayout.separate, .combined] {
             model.menuBarLayout = layout
             claude.applyDemoScenario(.healthy)
@@ -367,14 +367,23 @@ enum StatusBarSelfTest {
                     return size.height == 18 && entry.length == size.width + 8
                 }, "\(description): AppKit allocates the complete image plus padding")
             }
-            checkImageLayout(layout == .separate ? [21, 24] : [46], "Mixed low-quota layout")
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Mixed low-quota layout")
             claude.applyDemoScenario(.lastPercent)
             codex.applyDemoScenario(.exhausted)
-            checkImageLayout(layout == .separate ? [24, 24] : [51], "Both low, including 0% remaining")
-            check(codex.renderModel.lowRemainingPercent == 0, "Exhausted quota shows explicit 0% remaining")
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Both low, including exhausted quota")
+            check(codex.renderModel.session.fillLevel == .exhausted, "Exhausted quota keeps its explicit red slash")
             claude.applyDemoScenario(.lowQuotaBoundary)
             codex.applyDemoScenario(.lowQuotaBoundary)
-            checkImageLayout(layout == .separate ? [21, 21] : [41], "Recovery to 10% restores gauges")
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Quota recovery preserves fixed width")
+            claude.applyDemoScenario(.missingSession)
+            codex.applyDemoScenario(.missingWeekly)
+            checkImageLayout(layout == .separate ? [27, 27] : [57], "Missing quota preserves both fixed slots")
+            check(claude.renderModel.session.availability == .notListed
+                  && claude.renderModel.weekly.availability == .reported,
+                  "An omitted Claude session preserves its real weekly reading")
+            check(codex.renderModel.session.availability == .reported
+                  && codex.renderModel.weekly.availability == .unknown,
+                  "A missing Codex weekly meter cannot erase its session reading")
         }
 
         // Folding a row changes the panel's height after the popover has been sized.

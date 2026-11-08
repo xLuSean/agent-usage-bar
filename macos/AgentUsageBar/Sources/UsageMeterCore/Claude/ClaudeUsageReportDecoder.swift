@@ -4,8 +4,8 @@ import Foundation
 ///
 /// # Two kinds of row, two levels of strictness
 ///
-/// The gauge and the stored reading are built on exactly two meters: the session
-/// window and the all-models weekly window. Those rows are read strictly. A figure out
+/// The gauge has fixed slots for session and all-models weekly meters. Each present
+/// row is read strictly; a missing row stays absent. A figure out
 /// of range, a missing reset where one is required, or two rows claiming the same meter
 /// fails the whole reading, for the same reason the prose decoder fails closed.
 ///
@@ -26,17 +26,21 @@ enum ClaudeUsageReportDecoder {
     /// stored reading if the list ever arrives malformed.
     static let maximumAdditionalRows = 16
 
-    /// - Returns: the session window, the all-models weekly window, then every other
-    ///   readable row in the server's order; or `nil` when either required meter is
-    ///   absent from the rows.
-    static func windows(from rows: [Any], now: Date) throws -> [UsageWindow]? {
+    /// Validates every present general meter strictly, but does not manufacture a
+    /// missing meter from prose. Which meters apply belongs to the server.
+    static func windows(from rows: [Any], now: Date) throws -> [UsageWindow] {
         let objects = rows.compactMap { $0 as? [String: Any] }
+        guard rows.isEmpty || objects.contains(where: {
+            guard let kind = $0["kind"] as? String else { return false }
+            return ProviderMetadataText.isSafeIdentifier(kind)
+        }) else {
+            throw UsageError.schemaChanged("Unreadable usage report rows")
+        }
 
-        // Both are decoded before either is required, so a malformed weekly row is
-        // reported as malformed rather than hidden behind a missing session row.
+        // Both are validated even when one is absent, so a malformed weekly row is
+        // never hidden behind a missing session row.
         let session = try required(.session, group: .session, in: objects)
         let weekly = try required(.weeklyAll, group: .weekly, in: objects)
-        guard let session, let weekly else { return nil }
 
         let additional = objects.compactMap { additionalWindow($0, now: now) }
         // Identity is kind plus label, and both the panel and the remembered
@@ -45,7 +49,7 @@ enum ClaudeUsageReportDecoder {
         let occurrences = Dictionary(grouping: additional, by: \.id).mapValues(\.count)
         let distinct = additional.filter { occurrences[$0.id] == 1 }
 
-        return [session, weekly] + distinct.prefix(maximumAdditionalRows)
+        return [session, weekly].compactMap { $0 } + distinct.prefix(maximumAdditionalRows)
     }
 
     // MARK: - The two required meters

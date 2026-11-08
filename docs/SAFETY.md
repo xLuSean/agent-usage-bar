@@ -69,13 +69,13 @@ CLI 回報未登入時，面板提供 `claude` 讓使用者自己去終端機執
 
 | 輸出 | App 的做法 | 新鮮度的上限 |
 |---|---|---|
-| 報告有額度列 | 讀列 | 大約一分鐘 —— Claude Code 會短暫沿用剛取得的答案 |
-| 報告沒有額度列 | 當成這次查詢失敗，保留 App 自己上一筆讀數並標示為過期。**不讀文字** | 不適用，不顯示新數字 |
+| 報告有額度清單（可為空或缺列） | 只讀提供的列，缺列不以文字補齊 | 單一版本曾觀察到短暫快取，不是官方保證的時間上限 |
+| 報告的 `rate_limits` 或 `limits` 是 `null` | 當成查詢失敗，保留 App 自己上一筆讀數並標示過期。**不讀文字** | 不適用，不顯示新數字 |
 | 沒有附報告（較舊的 Claude Code，或不符合條件的登入） | 讀文字，套用 §3.1 的守門 | 一個時間窗，session 最壞接近 5 小時 |
 
 第二種情況不退回文字是刻意的：那正是文字會印出舊數字的時候。觀察紀錄與尚未驗證的部分見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §7 與 §10。
 
-所以這一節接下來描述的弱點，現在只在第三種情況下成立。§3.1 的守門則不分來源，兩個必要額度都要通過。
+本節接下來描述的文字快取弱點主要在第三種情況下成立。§3.1 的守門不分來源，每個有提供的基本額度都要通過；結構化清單缺少的窗沒有數字可顯示。
 
 ### 3.1 用 reset 時間當守門
 
@@ -86,7 +86,7 @@ CLI 回報未登入時，面板提供 `claude` 讓使用者自己去終端機執
 
 守門有 60 秒寬限，吸收時鐘誤差與「真實邊界 00:59:59 vs 文字寫 1am」這一秒的差距，否則每次窗滾動都會閃爍。
 
-session 與 weekly 兩個必要時間窗都各自檢查 reset。任一窗已超過 reset 與 60 秒寬限，整份讀數就判定不可用；session 尚未跨界不再能替已過期的 weekly 數字背書。
+session 與 weekly 只要有提供，就各自檢查 reset。任一有提供的基本窗已超過 reset 與 60 秒寬限，整份查詢判定不可用；session 尚未跨界不能替已過期的 weekly 數字背書。
 
 CLI 文字指定的 IANA timezone 必須能辨識。未知 timezone 會讓 reset 解析失敗並 fail closed，不再退回呼叫端或本機時區猜測。
 
@@ -116,9 +116,9 @@ resetsAt:      <absolute Unix timestamp>
 
 腳本的網路探針不能當證據：它用仍留在路由表裡的預設路線判成 `net=online`，但測試機只有 Wi-Fi，且 Wi-Fi 當時確實關閉。路由項目存在不等於仍可連線；之後不得再用這個探針或 `duration_ms` 判斷離線。
 
-**一個由 source 保證的下限。** weekly 的重置時間在兩條路徑的解析器裡都是**必要**的，session 的才是選用（文字見 [ClaudeUsageTextDecoder.swift](../macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageTextDecoder.swift)，報告見 [ClaudeUsageReportDecoder.swift](../macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageReportDecoder.swift)）。因此每一份被接受的讀數，至少帶著一個 `resetsAt` 進入守門迴圈 —— **守門不可能因為「這份讀數沒有重置時間」而整個被繞過。**
+**文字路徑由 source 保證的下限。** 文字必須有 weekly，而且 weekly 的 reset 必填，因此每份接受的文字讀數至少有一個重設時間。結構化清單可以合法缺少 weekly 或為空；沒有列出的窗不顯示數字，明確提供的 0% session 仍可沒有 reset。完整規則見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §2.1、§3.1。
 
-但要講清楚它保證到哪裡為止：weekly 的重置一週才動一次，所以一份「新的 session 重置搭配舊的百分比」的讀數，仍可能從一個還有好幾天才到期的 weekly 重置底下通過。這條擋掉的是「守門完全不作用」，不是 (B)。
+weekly 的重置一週才動一次，所以一份「新的 session 重置搭配舊的百分比」仍可能通過尚未到期的 weekly reset。這個下限不保證窗內資料即時，也無法排除 (B)。
 
 **證據等級：**
 
@@ -181,7 +181,7 @@ App 自身識別（Dock 圖示、About、DMG）一律不使用他人標誌。Abo
 
 誠實記錄，不因為看起來完成而標記為完成：
 
-- **結構化用量報告是官方標示的實驗性欄位。** 形狀可能改變，也可能不再附上。不附上時 App 退回文字；形狀改變時兩個必要額度 fail closed，結果是「顯示未知」而不是「顯示錯的數字」。報告在限流時與在兩段 session 之間的空檔長什麼樣子都還沒觀察到，見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §10。
+- **結構化用量報告是官方標示的實驗性欄位。** 沒有報告時 App 退回文字；有清單時不補缺列，合法缺列／空清單有獨立顯示；已提供的基本額度格式異常仍 fail closed。報告在真實限流與兩段 session 空檔的形狀尚未完整觀察，見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §10。
 - **「報告沒有額度列」的觀察是用封鎖對外連線做的。** 單一 Claude Code 版本、少數樣本，不是實際關閉網路介面，也不是永久契約。
 - **`/usage` 文字格式的長期穩定性未知。** 文字是沒有報告時的備援。百分比包在為人閱讀的英文散文裡，沒有欄位 schema。解析器逐字錨定兩行、對不上就 fail closed，所以格式改變會變成「顯示未知」而不是「顯示錯的數字」—— 但功能確實會失效。這是產品風險，不是實作缺陷。
 - **背景 `/usage` 偶爾可能要先啟動互動式 Claude Code。** 實機曾連續得到無法辨識的回應，直到使用者在 Terminal 啟動一次 `claude` 後才恢復。登入、續期或本機初始化是合理推測，但根因未由官方契約或可重現實驗確認；因此 App 只提供複製 `claude` 的人工 workaround，不自動登入、不改憑證，也不把這個現象降級成可信讀數。

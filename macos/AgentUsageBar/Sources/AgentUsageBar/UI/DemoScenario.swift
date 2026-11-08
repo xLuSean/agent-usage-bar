@@ -8,6 +8,9 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
     case starting
     case healthy
     case betweenWindows
+    case missingSession
+    case missingWeekly
+    case noLimits
     case refreshing
     case lowSession
     case lowQuotaBoundary
@@ -25,10 +28,13 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
         switch self {
         case .starting: "Starting"
         case .healthy: "Healthy (5h 29% used)"
-        case .betweenWindows: "Between Claude usage windows (0%, no reset)"
+        case .betweenWindows: "Between windows (0%, no reset)"
+        case .missingSession: "No five-hour meter reported"
+        case .missingWeekly: "No weekly meter reported"
+        case .noLimits: "Service listed no limits"
         case .refreshing: "Refreshing (showing previous data)"
         case .lowSession: "5h nearly exhausted (9% remaining)"
-        case .lowQuotaBoundary: "Badge boundary (10% remaining)"
+        case .lowQuotaBoundary: "Low quota (10% remaining)"
         case .lastPercent: "Last percent (1% remaining)"
         case .exhausted: "Exhausted (100%)"
         case .stale: "Stale (offline)"
@@ -47,6 +53,20 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
             return .current(Self.snapshot(sessionUsed: 29, weeklyUsed: 62, now: now, provider: provider))
         case .betweenWindows:
             return .current(Self.betweenWindowsSnapshot(now: now, provider: provider))
+        case .missingSession, .missingWeekly, .noLimits:
+            let base = Self.snapshot(sessionUsed: 29, weeklyUsed: 62, now: now, provider: provider)
+            let windows = base.windows.filter { window in
+                switch self {
+                case .missingSession: window.kind != .session
+                case .missingWeekly: window.kind != .weeklyAll
+                default: false
+                }
+            }
+            return .current(UsageSnapshot(
+                provider: provider, sourcePath: .fixture, windows: windows,
+                fetchedAt: now, codexAccountUsage: base.codexAccountUsage,
+                claudeLimitListReported: provider == .claude ? true : nil
+            ))
         case .refreshing:
             return .refreshing(previous: Self.snapshot(
                 sessionUsed: 29,
@@ -106,14 +126,16 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                     group: .session,
                     used: UsedPercent(hundredScale: sessionUsed),
                     resetsAt: now.addingTimeInterval(3_600 * 2 + 780),
-                    isActive: true
+                    isActive: provider == .claude,
+                    durationMinutes: provider == .codex ? 300 : nil
                 ),
                 UsageWindow(
                     kind: .weeklyAll,
                     group: .weekly,
                     used: UsedPercent(hundredScale: weeklyUsed),
                     resetsAt: now.addingTimeInterval(3_600 * 63),
-                    isActive: false
+                    isActive: false,
+                    durationMinutes: provider == .codex ? 10_080 : nil
                 ),
                 UsageWindow(
                     kind: .weeklyScoped,
@@ -139,14 +161,16 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
                     group: .session,
                     used: UsedPercent(hundredScale: 0),
                     resetsAt: nil,
-                    isActive: false
+                    isActive: false,
+                    durationMinutes: provider == .codex ? 300 : nil
                 ),
                 UsageWindow(
                     kind: .weeklyAll,
                     group: .weekly,
                     used: UsedPercent(hundredScale: 62),
                     resetsAt: now.addingTimeInterval(3_600 * 63),
-                    isActive: false
+                    isActive: false,
+                    durationMinutes: provider == .codex ? 10_080 : nil
                 ),
             ],
             fetchedAt: now,

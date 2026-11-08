@@ -22,7 +22,7 @@
 
 | 步驟 | 檢查什麼 | 為什麼需要它 |
 |---|---|---|
-| `swift test` | 核心邏輯單元測試 | 百分比、刻度、兩家解碼器、Claude 結構化用量報告與「報告沒有額度列時不得退回文字」的判斷、`/usage` 文字剖析與重置時間格式、新鮮度守門、JSONL／JSON-RPC、退避、狀態轉移、失敗分類、安全登入指引、雙語呈現、隱私安全的診斷紀錄，以及舊版快照相容性與損壞快取拒絕 |
+| `swift test` | 核心邏輯單元測試 | 百分比、刻度、獨立雙時間窗、兩家解碼器、Claude 的 null／空／部分清單與文字備援邊界、Codex 期間分類與原始位置推播合併、`/usage` 文字與時間格式、新鮮度守門、JSONL／JSON-RPC、退避、失敗分類、登入指引、雙語呈現、診斷紀錄，以及舊快照相容性與損壞快取拒絕 |
 | Debug／Release `xcodebuild` | Debug 診斷 App 與**實際出貨的 Release App target**（不簽章） | package 不編譯 App 層，`swift build` 看不到它；Debug 通過不能代替 Release。刻意不簽，避免要求驗證者先有憑證 |
 | Release fixture guard | Xcode target metadata 與 Release binary 都不得含 fixture module／型別／UI 文案 | 合成 render 情境可留在 `#if DEBUG`，但 DMG 不應附帶假資料模式 |
 | bundle sanity | 圖示存在、`LSUIElement` 已設 | 沒設 `LSUIElement` 的選單列 App 啟動後看起來什麼也沒做 |
@@ -52,6 +52,10 @@
 ## 最近驗證節點
 
 這裡保留行為與驗證結果，不引用公開前的內部 commit hash。公開基線以可重跑的 `./scripts/verify.sh`、現行 source 與測試作為長期證據。
+
+2026-11-07，共用外框雙時間窗：每家固定 27 × 18 pt，左 5 小時、右所有模型的 7 天，中間一條分隔線；兩家合併圖像固定 57 × 18 pt，低額度不再改成數字徽章或改變寬度。詳情固定保留兩列，0%、尚無資料與 Claude 清單未列出限制保持不同語意。Claude 保留既有固定 `/usage` 指令，只在沒有報告時讀文字；null 清單仍失敗，合法空／部分清單不再以文字補齊，移除「目前綁定」標記。Codex 依實際期間選擇固定窗，原始 `sourceSlot` 用於局部推播合併，涵蓋主要窗是週額度及推播省略期間的情境。新欄位保持舊快照可讀，額外檢查非正期間、重複身分與來源位置。
+
+最終 `./scripts/verify.sh` 通過 **276 項／26 suites**、Debug／Release Xcode builds、隔離 AppKit diagnostics、雙語介面繪製、固定寬度與缺列自我測試、packaging／release fixtures、正式設定未變動及全部靜態護欄。另檢視正式繪圖器產生的深淺色原尺寸／放大圖、缺列情境與合併面板；對照圖裁切已修正。輸出 `dist/gauges.png`、`dist/gauges.low-quota.png`、`dist/ui.png`、`dist/ui.combined-dark.png` 及雙語設定圖。未執行真實 provider、未安裝或建立候選 DMG；原始 Codex 缺列現象尚未在真實帳號重現，仍需安裝後核對來源讀數與顯示結果。
 
 2026-10-11，收放檢查不再依賴執行當下的螢幕：0.4.110-alpha.1 推送後，GitHub Actions 的 status bar self-test 失敗一項 ——「combined: folding a row shrinks the popover (650 → 650 pt)」。合併版面的面板自然高度約 815 pt，而 CI 的螢幕較矮，popover 一開啟就被壓在螢幕上限 650 pt，收合一列後仍是 650 pt。檢查把「高度沒變」當成收放沒有傳到 popover，但那其實是正確行為；本機螢幕夠高，所以先前幾次完整驗證都沒有遇到。修正後檢查改為注入螢幕高度：兩種版面各測「夠高」（4000 pt）與「很矮」（300 pt）。每一組都要求收合後的高度等於「在收合狀態下重新開啟」會得到的高度，以及展開後回到原本的高度；夠高時另外要求確實變矮，很矮時要求不超過螢幕上限。出貨程式的行為沒有改變，變更只在 `#if DEBUG` 的診斷路徑，已發布的 0.4.110-alpha.1 DMG 不受影響；但它的 tag 所指的 commit 在 CI 上維持失敗。本機完整 `./scripts/verify.sh` 通過 247 項／26 suites、Debug／Release Xcode builds、隔離 AppKit diagnostics（收放檢查 12 項）、UI render、production settings unchanged、packaging／release fixtures、全部靜態護欄及 `git diff --check`。CI 是否轉綠要等這個修正推送後才知道。教訓與 `swift build` 看不到 App 層是同一類：會讀取執行環境的檢查，只在一台機器上通過不算通過。
 

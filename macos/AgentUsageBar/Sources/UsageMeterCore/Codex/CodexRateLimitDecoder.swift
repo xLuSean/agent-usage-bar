@@ -43,6 +43,10 @@ public enum CodexRateLimitDecoder {
         guard !windows.isEmpty else {
             throw UsageError.schemaChanged("Standard codex rateLimits has no decodable primary or secondary window")
         }
+        let knownKinds = windows.filter { $0.kind == .session || $0.kind == .weeklyAll }.map(\.kind)
+        guard Set(knownKinds).count == knownKinds.count else {
+            throw UsageError.schemaChanged("Codex returned duplicate general quota durations")
+        }
 
         return UsageSnapshot(
             provider: .codex,
@@ -59,8 +63,6 @@ public enum CodexRateLimitDecoder {
         )
     }
 
-    private enum Position { case primary, secondary }
-
     /// Prefer the multi-bucket entry named `codex`, then fall back to the documented
     /// backward-compatible single-bucket view. Extra limit IDs are intentionally not
     /// surfaced in MVP, but their presence never makes the general bucket fail.
@@ -74,7 +76,7 @@ public enum CodexRateLimitDecoder {
 
     private static func makeWindow(
         _ raw: [String: Any],
-        position: Position,
+        position: UsageWindow.SourceSlot,
         limitID: String,
         limitName: String?
     ) throws -> UsageWindow {
@@ -83,30 +85,35 @@ public enum CodexRateLimitDecoder {
             throw UsageError.schemaChanged("Codex usedPercent must be an integer from 0 through 100")
         }
         let duration = try optionalInteger(raw, key: "windowDurationMins")
+        if let duration, duration <= 0 {
+            throw UsageError.schemaChanged("Codex window duration must be positive")
+        }
         let reset = try optionalInteger(raw, key: "resetsAt")
             .map { Date(timeIntervalSince1970: TimeInterval($0)) }
 
-        let kind: UsageWindow.Kind
-        let group: UsageWindow.Group
-        switch position {
-        case .primary:
-            kind = .session
-            group = .session
-        case .secondary:
-            kind = limitID == "codex" ? .weeklyAll : .weeklyScoped
-            group = .weekly
-        }
+        let (kind, group) = classification(duration: duration, position: position, limitID: limitID)
 
         return UsageWindow(
             kind: kind,
             group: group,
             used: UsedPercent(hundredScale: Double(used)),
             resetsAt: reset,
-            // The product's gauge represents the documented general primary bucket.
-            isActive: limitID == "codex" && position == .primary,
+            // App Server does not supply Claude's server-selected indicator flag.
+            isActive: false,
             modelDisplayName: limitID == "codex" ? nil : (limitName ?? limitID),
-            durationMinutes: duration
+            durationMinutes: duration,
+            sourceSlot: position
         )
+    }
+
+    static func classification(
+        duration: Int?, position: UsageWindow.SourceSlot, limitID: String = "codex"
+    ) -> (UsageWindow.Kind, UsageWindow.Group) {
+        switch duration {
+        case 300: (.session, .session)
+        case 10_080: (limitID == "codex" ? .weeklyAll : .weeklyScoped, .weekly)
+        default: (.unrecognized("codex_\(position.rawValue)"), .unrecognized("other"))
+        }
     }
 
     private static func credits(from value: Any?) -> UsageCredits? {

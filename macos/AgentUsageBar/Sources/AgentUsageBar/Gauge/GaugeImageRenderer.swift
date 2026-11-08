@@ -1,5 +1,4 @@
 import AppKit
-import CoreText
 import UsageMeterCore
 
 /// Draws the menu bar gauge.
@@ -15,21 +14,16 @@ import UsageMeterCore
 /// on appearance changes and every colour here is a dynamic system colour.
 enum GaugeImageRenderer {
 
-    static let size = NSSize(width: 21, height: 18)
-    static let lowQuotaSize = NSSize(width: 24, height: 18)
-
-    static func imageSize(for model: GaugeRenderModel) -> NSSize {
-        model.lowRemainingPercent == nil ? size : lowQuotaSize
-    }
+    static let size = NSSize(width: 27, height: 18)
 
     private static let glyphWidth: CGFloat = 7.5
-    private static let frameStroke: CGFloat = 1.5
-    private static let innerInset: CGFloat = 1.2
+    private static let frameStroke: CGFloat = 1.25
+    private static let innerInset: CGFloat = 0.75
     /// Keeps 1% used from rendering as nothing at all.
     private static let minimumVisibleFill: CGFloat = 2.0
 
     static func image(for model: GaugeRenderModel, identityColor: NSColor) -> NSImage {
-        let image = NSImage(size: imageSize(for: model), flipped: false) { _ in
+        let image = NSImage(size: size, flipped: false) { _ in
             draw(model: model, identityColor: identityColor)
             return true
         }
@@ -38,25 +32,19 @@ enum GaugeImageRenderer {
         return image
     }
 
-    static func draw(model: GaugeRenderModel, identityColor: NSColor, width: CGFloat? = nil) {
-        let size = NSSize(width: width ?? Self.size.width, height: Self.size.height)
+    static func draw(model: GaugeRenderModel, identityColor: NSColor) {
         let dimmed = model.frameStyle == .dashedEmpty || model.frameStyle == .disabledNeutral
         let outlineColor = dimmed ? identityColor.withAlphaComponent(0.55) : identityColor
 
         drawGlyph(model.glyph, color: outlineColor)
 
-        if let remaining = model.lowRemainingPercent {
-            drawRemainingBadge(remaining, identityColor: outlineColor)
-            return
-        }
-
         let frameRect = NSRect(
             x: glyphWidth + 1.5,
             y: 1,
-            width: size.width - glyphWidth - 3,
+            width: 18,
             height: size.height - 2
         )
-        let framePath = NSBezierPath(roundedRect: frameRect.insetBy(dx: frameStroke / 2, dy: frameStroke / 2), xRadius: 3, yRadius: 3)
+        let framePath = NSBezierPath(roundedRect: frameRect.insetBy(dx: frameStroke / 2, dy: frameStroke / 2), xRadius: 1.8, yRadius: 1.8)
         framePath.lineWidth = frameStroke
         if model.frameStyle == .dashedEmpty {
             var pattern: [CGFloat] = [2.0, 1.6]
@@ -76,50 +64,43 @@ enum GaugeImageRenderer {
             NSBezierPath(roundedRect: innerRect, xRadius: 1.5, yRadius: 1.5).fill()
         }
 
-        switch model.frameStyle {
-        case .dashedEmpty, .disabledNeutral:
-            drawNoReadingMark(in: innerRect)
-        case .solid, .staleMarked, .throttledStriped:
-            drawFill(model: model, in: innerRect)
+        // A single frame and one divider: there is no gap or duplicated border
+        // between the five-hour (left) and seven-day (right) meters.
+        let divider = NSBezierPath()
+        divider.move(to: NSPoint(x: frameRect.midX, y: frameRect.minY + frameStroke))
+        divider.line(to: NSPoint(x: frameRect.midX, y: frameRect.maxY - frameStroke))
+        divider.lineWidth = 1
+        outlineColor.setStroke()
+        divider.stroke()
+
+        let halves = [
+            NSRect(x: innerRect.minX, y: innerRect.minY,
+                   width: frameRect.midX - 0.5 - innerRect.minX, height: innerRect.height),
+            NSRect(x: frameRect.midX + 0.5, y: innerRect.minY,
+                   width: innerRect.maxX - frameRect.midX - 0.5, height: innerRect.height),
+        ]
+        for (segment, rect) in zip([model.session, model.weekly], halves) {
+            switch segment.availability {
+            case .unknown:
+                drawNoReadingMark(in: rect)
+            case .notListed:
+                let slash = NSBezierPath()
+                slash.move(to: NSPoint(x: rect.minX, y: rect.minY))
+                slash.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
+                slash.lineWidth = 1
+                NSColor.secondaryLabelColor.setStroke()
+                slash.stroke()
+            case .reported:
+                drawFill(model: segment, in: rect)
+                if segment.frameStyle == .staleMarked && model.frameStyle != .staleMarked {
+                    drawStaleMark(near: rect)
+                }
+            }
         }
 
         if model.frameStyle == .staleMarked {
             drawStaleMark(near: frameRect)
         }
-    }
-
-    /// Keep the approved badge at full width even in a combined status item. Ink
-    /// bounds position the two lines independently of the font's line-height padding.
-    private static func drawRemainingBadge(_ remaining: Int, identityColor: NSColor) {
-        let frame = NSBezierPath(
-            roundedRect: NSRect(x: 9.5, y: 0.5, width: 13, height: 17),
-            xRadius: 3, yRadius: 3
-        )
-        frame.lineWidth = 1
-        identityColor.setStroke()
-        frame.stroke()
-
-        drawBadgeText(String(remaining), fontSize: 11, inkTop: 16)
-        drawBadgeText("%", fontSize: 7, inkBottom: 2)
-    }
-
-    private static func drawBadgeText(
-        _ value: String, fontSize: CGFloat, inkTop: CGFloat? = nil, inkBottom: CGFloat = 0
-    ) {
-        let line = CTLineCreateWithAttributedString(NSAttributedString(string: value, attributes: [
-            .font: NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .semibold),
-            .foregroundColor: NSColor.labelColor,
-        ]))
-        let ink = CTLineGetBoundsWithOptions(line, .useGlyphPathBounds)
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        context.saveGState()
-        defer { context.restoreGState() }
-        context.textMatrix = .identity
-        context.textPosition = CGPoint(
-            x: 16 - ink.midX,
-            y: inkTop.map { $0 - ink.maxY } ?? (inkBottom - ink.minY)
-        )
-        CTLineDraw(line, context)
     }
 
     private static func drawGlyph(_ glyph: String, color: NSColor) {
@@ -133,17 +114,15 @@ enum GaugeImageRenderer {
         ))
     }
 
-    private static func drawFill(model: GaugeRenderModel, in innerRect: NSRect) {
+    private static func drawFill(model: GaugeWindowRenderModel, in innerRect: NSRect) {
         // A fully consumed window gets an explicit mark rather than a full bar, so
         // "nothing left" cannot be misread as "the gauge is nicely full".
         if model.fillLevel == .exhausted {
             drawExhaustedSlash(in: innerRect)
             return
         }
-        guard model.fillFraction > 0 else {
-            drawNoReadingMark(in: innerRect)
-            return
-        }
+        // A reported zero is empty. A grey dash is reserved for unknown data.
+        guard model.fillFraction > 0 else { return }
 
         let height = max(minimumVisibleFill, innerRect.height * CGFloat(model.fillFraction))
         let fillRect = NSRect(x: innerRect.minX, y: innerRect.minY, width: innerRect.width, height: min(height, innerRect.height))
@@ -193,28 +172,13 @@ enum GaugeImageRenderer {
         NSBezierPath(roundedRect: markRect, xRadius: 0.75, yRadius: 0.75).fill()
     }
 
-    /// Triangle overlapping the top-right corner: a real reading, known to be old.
-    ///
-    /// Orange rather than a label colour so it survives both menu bar appearances, and
-    /// punched out of the frame first so the corner does not blur into it at 21 points.
+    /// A small triangle stays inside its half, without growing the status item.
     private static func drawStaleMark(near frameRect: NSRect) {
-        let tip = NSPoint(x: frameRect.maxX + 1, y: frameRect.maxY + 1)
-        let path = NSBezierPath()
-        path.move(to: tip)
-        path.line(to: NSPoint(x: tip.x - 7.0, y: tip.y))
-        path.line(to: NSPoint(x: tip.x, y: tip.y - 7.0))
-        path.close()
-
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current?.compositingOperation = .destinationOut
-        NSColor.black.setFill()
-        path.fill()
-        NSGraphicsContext.restoreGraphicsState()
-
+        let tip = NSPoint(x: frameRect.maxX - 0.5, y: frameRect.maxY - 0.5)
         let mark = NSBezierPath()
-        mark.move(to: NSPoint(x: tip.x - 1, y: tip.y - 1))
-        mark.line(to: NSPoint(x: tip.x - 6.0, y: tip.y - 1))
-        mark.line(to: NSPoint(x: tip.x - 1, y: tip.y - 6.0))
+        mark.move(to: tip)
+        mark.line(to: NSPoint(x: tip.x - 3, y: tip.y))
+        mark.line(to: NSPoint(x: tip.x, y: tip.y - 3))
         mark.close()
         NSColor.systemOrange.setFill()
         mark.fill()
@@ -262,29 +226,25 @@ extension GaugeImageRenderer {
     /// cost the ability to tell which reading belongs to whom. That is the one thing
     /// the plans make non-negotiable about this icon.
     ///
-    /// Gauges are drawn narrower than in the separate layout, but the letter stays at
-    /// full size: shrinking the glyph is what would actually make it unreadable.
+    /// Each provider keeps the same fixed width in both layouts.
     static func combinedImage(
         for models: [(model: GaugeRenderModel, identityColor: NSColor)]
     ) -> NSImage {
         guard !models.isEmpty else { return neutralAppIcon() }
 
         let spacing: CGFloat = 3
-        let widths = models.map { entry in
-            entry.model.lowRemainingPercent == nil ? size.width - 2 : lowQuotaSize.width
-        }
-        let totalWidth = widths.reduce(0, +) + spacing * CGFloat(models.count - 1)
+        let totalWidth = size.width * CGFloat(models.count) + spacing * CGFloat(models.count - 1)
 
         let image = NSImage(size: NSSize(width: totalWidth, height: size.height), flipped: false) { _ in
             var x: CGFloat = 0
-            for (index, entry) in models.enumerated() {
+            for entry in models {
                 NSGraphicsContext.saveGraphicsState()
                 let transform = NSAffineTransform()
                 transform.translateX(by: x, yBy: 0)
                 transform.concat()
-                draw(model: entry.model, identityColor: entry.identityColor, width: widths[index])
+                draw(model: entry.model, identityColor: entry.identityColor)
                 NSGraphicsContext.restoreGraphicsState()
-                x += widths[index] + spacing
+                x += size.width + spacing
             }
             return true
         }
@@ -295,7 +255,6 @@ extension GaugeImageRenderer {
 
     static func combinedWidth(count: Int) -> CGFloat {
         guard count > 0 else { return 24 }
-        let unitWidth = size.width - 2
-        return unitWidth * CGFloat(count) + 3 * CGFloat(count - 1) + 8
+        return size.width * CGFloat(count) + 3 * CGFloat(count - 1) + 8
     }
 }

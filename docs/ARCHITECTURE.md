@@ -30,7 +30,7 @@ UsageProvider protocol           fetch() async throws -> UsageSnapshot
   │    ├─ ClaudeExecutableLocator    GUI PATH、指定路徑與可執行驗證
   │    ├─ ClaudeUsageCommand         固定 arguments；唯一可建構 Process 的地方
   │    ├─ ClaudeUsageDecoder         輸出陣列 → 用量報告或文字；決定讀哪一個
-  │    ├─ ClaudeUsageReportDecoder   結構化額度列；兩個必要額度 fail closed
+  │    ├─ ClaudeUsageReportDecoder   結構化額度列；有提供的基本額度 fail closed
   │    ├─ ClaudeUsageTextDecoder     兩行錨定文字；沒有報告時的備援，fail closed
   │    └─ ClaudeSignInRecovery       只提供可複製的登入指令，不執行登入
   ├─ CodexUsageProvider
@@ -153,7 +153,7 @@ App 本身也有單一執行個體邊界。`AppInstanceCoordinator` 在使用者
 
 查詢失敗另由 `DiagnosticLogStore` 保存一份有界紀錄。資料包含 App 產生的 UUID、發生時間、`ProviderKind`、封閉的 `DiagnosticErrorKind`，以及可選的封閉 `DiagnosticErrorDetail`。Codex 查詢另可保存唯讀方法、背景程序啟動時間與沿用狀態、RPC 與 HTTP 數字代碼、已辨識的原因，及同一種查詢後來恢復的時間與程序是否相同。Detail 只把已知錯誤形狀縮減成 App 自己定義的固定原因代碼；無法辨識的 associated string 一律成為 `unrecognizedResponse`，不保存來源文字。設定頁可展開每筆紀錄，依目前 App 語言從這些封閉值產生完整說明並複製。原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑及 provider metadata 都不能進入紀錄或複製文字。舊版沒有 detail 的紀錄仍可解碼，畫面會明示當時未保存更多細節。預設保留 5 天，使用者可選 3／5／7 天並隨時清除；改期限、啟動與新增時都會 prune，固定最多 200 筆，持久化 JSON 在解碼前另限制為 64 KiB，超限即刪除並視為沒有紀錄。只有通過 configuration-generation guard 的正式 fetch failure 記一筆，pacing skip、舊設定的晚到結果及 malformed Codex advisory push 都不記錄。
 
-磁碟上的 JSON 是另一個輸入邊界，不能因為它曾由 App 寫出就永遠信任。保存與讀回都限制單一 snapshot 最多 64 KiB，並重新驗證所有 provider metadata；讀回時還會確認百分比有限且位於 `0...100`、storage key 與 snapshot provider 一致、來源屬於該 provider、不是 fixture、至少有一個時間窗，而且 `fetchedAt` 不在未來、所有有 reset 的時間窗仍未跨過 60 秒寬限。Codex Token 統計另要求總量非負、每日最多 400 筆、日期為有效且嚴格遞增的 `yyyy-MM-dd`、每日數字非負。任一條失敗就當作沒有保存讀數並照常查詢。現行 `.claudeCodeCLI` 快照還必須各有一個 session 與 weekly window，session 缺 reset 只允許 `0%`，weekly 一律要有 reset，與 live decoder 的 fail-closed 規則相同；額外的未知 window kind 可以保留，但仍受文字與 snapshot 大小上限約束。Codex 的 reset 仍依 App Server schema 維持 optional，不套用 Claude 規則。舊 Claude `usageEndpoint`／`messagesFallback` 來源仍可解碼與短暫還原，保留升級相容性，但目前 provider 不會再產生它們。
+磁碟上的 JSON 是另一個輸入邊界。每份 snapshot 限制 64 KiB，重新驗證 provider metadata、百分比、來源、provider、時間戳及 reset 寬限；fixture 不保存，異常資料視為沒有讀數。Codex Token 統計另驗證非負總量、最多 400 筆有效且嚴格遞增的日期及非負每日數字。Claude 的結構化清單快照帶 `claudeLimitListReported: true`，容許缺少一般時間窗或空清單；沒有這個標記的舊／文字快照仍必須有 session 與 weekly。每個有提供的 session 只在明確為 0% 時允許沒有 reset，weekly 只要有列出就必須有 reset，各自最多一列。Codex 的 reset 仍為 optional。舊 Claude `usageEndpoint`／`messagesFallback` 仍可解碼供升級相容，目前 provider 不再產生它們。
 
 ## 9. 查詢節流
 
@@ -182,7 +182,7 @@ Provider 設定改變時，`ProviderPresenter` 會推進自己持有的 configur
 
 每個 App Server instance 擁有自己唯一的空白工作目錄。正常停止、timeout、路徑切換或意外退出時，目錄都跟著該精確 `Process` 保留到 Foundation 確認 root child 已退出後才清理；重連建立新的目錄，不會讓新舊程序共用或提前刪除仍在使用的 cwd。
 
-Decoder 可以接受只有 primary 的 sparse 通知；`CodexRateLimitUpdatePolicy` 只把通知實際提供的 window／metadata 合併進上一份完整 snapshot，並保留 notification 未攜帶的帳號 Token 統計。`CodexAccountUsageUpdatePolicy` 做相反方向的局部合併：只替換 Token 統計及其時間戳，不改額度、額度 `fetchedAt` 或 display-state case。兩邊失敗都保留另一邊最後可信資料；若 Token 比第一份額度先回來，presenter 暫存正規化結果，等額度 snapshot 建立後再合併。notification 不重設 failure／backoff，也不重新安排任何 timer。沒有可信 base 或 identity 不相容時，局部 notification 不改變現況。
+Decoder 可以接受只有 primary 的 sparse 通知。`sourceSlot` 保存 primary／secondary 原始位置，`kind` 依實際期間分類；兩者不再混用。`CodexRateLimitUpdatePolicy` 依原始位置合併已提供的 window／metadata，先沿用未回報的期間再分類，保留未攜帶的時間窗與 Token 統計。舊快照的原始位置依舊版映射相容辨識。`CodexAccountUsageUpdatePolicy` 做相反方向的局部合併：只替換 Token 統計及其時間戳，不改額度、額度 `fetchedAt` 或 display-state case。兩邊失敗都保留另一邊最後可信資料；若 Token 比第一份額度先回來，presenter 暫存正規化結果，等額度 snapshot 建立後再合併。notification 不重設 failure／backoff，也不重新安排任何 timer。沒有可信 base、identity 不相容或合併產生重複基本期間時，忽略局部通知。
 
 帳號 Token 統計是附加能力。完整 fetch 先取得必要的 rate limits，再讀 account usage；第二步若不支援、逾時或解碼失敗，quota snapshot 仍成功，只有 Token 區塊呈現不可用。`lifetimeTokens` 與 `peakDailyTokens` 直接使用官方 summary，不由 daily buckets 重算；每日數字也直接採用 provider buckets。`threadUsage` 與 cache 拆解不進入 domain model。
 
@@ -204,9 +204,9 @@ popover 開啟前先以不捲動的 SwiftUI view 測量自然高度。螢幕可�
 
 ## 12. Claude `/usage` 解碼與子程序生命週期
 
-`--verbose` 的輸出是一個 JSON 陣列，同一批額度數字出現兩次：`assistant` 訊息上的結構化 `usage_report`，以及 `result` 訊息裡給人閱讀的文字。`ClaudeUsageDecoder` 決定讀哪一個：有報告且有額度列就讀列；有報告但沒有額度列時回報 `claudeUsageUnavailable`，**不退回文字** —— 那正是文字會印出舊快取的時候；沒有附報告才讀文字。完整的判斷表見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §2.1。
+`--verbose` 的輸出是一個 JSON 陣列，包含 `assistant` 訊息上的結構化 `usage_report`，以及 `result` 訊息裡給人閱讀的文字。有結構化清單就只讀清單，缺列保持缺列，空清單保持沒有讀數；報告的 `rate_limits` 或 `limits` 為 `null` 時回報 `claudeUsageUnavailable`，不退回可能是舊快取的文字。只有沒有附報告才讀文字。完整判斷見 [CLAUDE_USAGE.md](CLAUDE_USAGE.md) §2.1。
 
-不論來源，Decoder 都必須同時讀到 session 與 weekly，並逐一確認 reset 尚未超過 60 秒寬限；任何一個窗已結束，整份讀數就不可用。session 缺少 reset 只在明確為 `0%` 時接受，任何非零值都 fail closed；weekly 仍一律要求 reset。報告裡其餘的額度列（各模型的週上限等）盡力而為：讀得懂就顯示，讀不懂就略過，不得拖垮那兩個必要數字。文字指定的 IANA timezone 是資料契約的一部分，無法辨識時直接 fail closed，不使用本機或呼叫端時區猜測。
+文字路徑必須同時讀到 session 與 weekly；結構化清單容許缺列。每個有提供的基本額度都確認 reset 尚未超過 60 秒寬限，session 缺 reset 只在明確為 0% 時接受，weekly 有列出時一律要求 reset；壞型別、重複基本列或過期 reset 仍使整份讀數失敗。其他額度列盡力解析，無法讀取則略過。文字指定的 IANA timezone 無法辨識時直接 fail closed，不猜本機時區。
 
 陣列的開頭訊息列出工作目錄、session 與這次執行的工具清單，另有本機活動統計的原文。這些一律不讀；失敗分類在輸出是陣列時也只看 `result` 訊息自己的文字，不取輸出開頭的一段。
 

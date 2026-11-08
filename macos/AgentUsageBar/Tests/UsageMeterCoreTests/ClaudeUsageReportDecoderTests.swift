@@ -235,26 +235,25 @@ struct ClaudeUsageReportDecoderTests {
         #expect(snapshot.representativeWindow?.used.usedPercent == 88)
     }
 
-    /// Not yet observed: between two session windows the prose prints `0%` with no
-    /// reset, and the rows might instead leave the session meter out altogether. The
-    /// server answered either way, so the prose is fresh and is read, rather than the
-    /// app sitting on an error through every idle gap.
-    @Test func readsTheProseWhenARequiredRowIsAbsent() throws {
+    /// An omitted meter is not a zero supplied by prose. Keep the real weekly reading
+    /// and its scoped rows, with explicit provenance for the absent session slot.
+    @Test func keepsPartialReportWithoutInventingAMissingMeter() throws {
         let prose = ClaudeUsageTextDecoderTests.body(session: "0% used")
         let snapshot = try Self.decode(
             Self.output(report: Self.report(limits: [Self.weekly, Self.scoped]), result: prose)
         )
 
-        #expect(snapshot.windows.map(\.kind) == [.session, .weeklyAll])
-        #expect(snapshot.representativeWindow?.used.usedPercent == 0)
-        #expect(snapshot.representativeWindow?.resetsAt == nil)
+        #expect(snapshot.windows.map(\.kind) == [.weeklyAll, .weeklyScoped])
+        #expect(snapshot.quotaWindow(for: .session) == nil)
+        #expect(snapshot.quotaWindow(for: .weeklyAll)?.used.usedPercent == 7)
+        #expect(snapshot.isQuotaNotListed(.session))
+        #expect(snapshot.claudeLimitListReported == true)
     }
 
-    /// The prose is still read strictly when it is the fallback.
-    @Test func failsWhenARequiredRowIsAbsentAndTheProseCannotBeRead() {
-        #expect(throws: UsageError.schemaChanged("Missing result text")) {
-            try Self.decode(Self.output(report: Self.report(limits: [Self.weekly]), result: ""))
-        }
+    @Test func partialReportDoesNotRequireReadableProse() throws {
+        let snapshot = try Self.decode(Self.output(report: Self.report(limits: [Self.weekly]), result: ""))
+        #expect(snapshot.windows.count == 1)
+        #expect(snapshot.quotaWindow(for: .weeklyAll)?.used.usedPercent == 7)
     }
 
     // MARK: - The two required rows fail closed
@@ -331,9 +330,34 @@ struct ClaudeUsageReportDecoderTests {
         }
     }
 
-    @Test func rejectsAReportWithNoRowsAtAll() {
-        #expect(throws: UsageError.schemaChanged("The usage report contains no limit rows")) {
-            try Self.decode(rows: [])
+    @Test func emptyAndPartialReportsPersistWithoutBecomingZero() throws {
+        let suite = "ClaudePartialReport-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = UsageSnapshotStore(defaults: defaults)
+        for rows in [[], [Self.weekly], [Self.session]] {
+            let snapshot = try Self.decode(rows: rows)
+            #expect(snapshot.claudeLimitListReported == true)
+            store.save(snapshot)
+            #expect(store.load(.claude, now: snapshot.fetchedAt) == snapshot)
+            var legacy = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
+            legacy.removeValue(forKey: "claudeLimitListReported")
+            defaults.set(try JSONSerialization.data(withJSONObject: legacy), forKey: "v1.snapshot.claude")
+            #expect(store.load(.claude, now: snapshot.fetchedAt) == nil)
+            if rows.isEmpty {
+                #expect(snapshot.windows.isEmpty)
+                #expect(snapshot.isQuotaNotListed(.session))
+                #expect(snapshot.isQuotaNotListed(.weeklyAll))
+            }
+        }
+    }
+
+    @Test func unreadableRowsAreNotAnEmptyLimitList() {
+        let invalidRows: [[Any]] = [[NSNull()], [[:] as [String: Any]], ["bad", [:] as [String: Any]]]
+        for rows in invalidRows {
+            #expect(throws: UsageError.schemaChanged("Unreadable usage report rows")) {
+                try Self.decode(Self.output(report: Self.report(limits: rows)))
+            }
         }
     }
 

@@ -482,7 +482,7 @@ struct ClaudeUsageTextDecoderTests {
 
     /// A report means the server answered, so the sign-in was working. The summary
     /// beside one is not read as a sign-in problem, and the report's own verdict wins.
-    @Test func aSummaryBesideAReportIsNotASignInProblem() {
+    @Test func aSummaryBesideAReportIsNotASignInProblem() throws {
         #expect(throws: UsageError.claudeUsageUnavailable) {
             try ClaudeUsageDecoder.decode(
                 ClaudeUsageReportDecoderTests.output(
@@ -493,10 +493,9 @@ struct ClaudeUsageTextDecoderTests {
                 timeZone: Self.taipei
             )
         }
-        // Rows without the session meter send the decoder to the prose, which is then
-        // read strictly as usage prose.
-        #expect(throws: Self.missingSessionLine) {
-            try ClaudeUsageDecoder.decode(
+        // Present structured rows win even when a meter is absent and the prose is
+        // a cost summary. Neither zero usage nor an authentication error is invented.
+        let snapshot = try ClaudeUsageDecoder.decode(
                 ClaudeUsageReportDecoderTests.output(
                     report: ClaudeUsageReportDecoderTests.report(limits: [
                         ClaudeUsageReportDecoderTests.weekly, ClaudeUsageReportDecoderTests.scoped,
@@ -506,7 +505,9 @@ struct ClaudeUsageTextDecoderTests {
                 now: Self.now,
                 timeZone: Self.taipei
             )
-        }
+        #expect(snapshot.quotaWindow(for: .session) == nil)
+        #expect(snapshot.quotaWindow(for: .weeklyAll)?.used.usedPercent == 7)
+        #expect(snapshot.isQuotaNotListed(.session))
     }
 
     /// The summary's figures are the user's spend. None of them reaches the error.

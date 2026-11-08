@@ -6,7 +6,7 @@ A Claude and Codex usage meter for the macOS menu bar. See how much of your subs
 
 > [!WARNING]
 > Apple Silicon alpha release. Builds are ad-hoc signed and **not Apple-notarized**, so they do not carry an Apple-verifiable publisher identity. macOS is expected to require manual approval after downloading the app.
-> Both usage readings come from local CLIs: Claude runs `claude -p "/usage"`, while Codex uses the read-only App Server interface. Claude embeds percentages in human-readable text rather than structured fields; if that format changes, the app shows “Unknown” instead of guessing.
+> Both usage readings come from local CLIs: Claude runs a fixed `/usage` query and prefers its structured report, falling back to text only when no report is attached. Codex uses the read-only App Server interface. Untrustworthy formats produce “Unknown” rather than guessed values.
 
 > [!NOTE]
 > **Known Claude issue:** In some cases, the background `/usage` query keeps showing “Response format changed” until the user launches `claude` once in Terminal. If this happens, launch Claude Code, complete any sign-in prompt, return to the app, and click Refresh. The app does not sign you in or repair credentials for you; see the Claude section below for details.
@@ -16,10 +16,10 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/menu-bar-dark.png" width="720" alt="Claude and Codex gauges at their actual macOS menu-bar size">
+  <img src="docs/images/dual-window-gauges.png" width="720" alt="Shared-frame five-hour and weekly gauges at native size and enlarged">
 </p>
 
-<p align="center"><sub>The separate-display menu-bar appearance. The gauges come from the app's production renderer; the clean synthetic background contains no real desktop information.</sub></p>
+<p align="center"><sub>Shared-frame gauges at native size and 2.5× in light and dark appearances. Images use the production renderer and synthetic readings.</sub></p>
 
 <p align="center">
   <img src="docs/images/combined-popover-dark.png" width="320" alt="Combined Claude and Codex usage popover in dark mode">
@@ -36,13 +36,13 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 
 ## What it does
 
-Agent Usage Bar places a vertical liquid gauge in the menu bar. **The filled height is the percentage already used**—it rises as usage grows rather than shrinking as allowance runs out. Click it to see detailed values for each usage window.
+Each provider has one shared rectangular gauge, divided into **five hours on the left and seven days on the right**. Fill height represents the percentage already used. Each provider stays at 27 × 18 pt, and the combined image is 57 × 18 pt. Click it to see detailed values for each usage window.
 
 Both providers already report “percentage used.” Converting that value again would only add confusion, so the number and the gauge communicate the same thing.
 
 - The **outline color** identifies the provider and can be customized.
 - The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and a red slash at 100%) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
-- **Below 10% remaining**, a current reading switches to a colored outline containing the remaining number with `%` underneath, including `0%` when exhausted. Both separate and combined icons retain C/X and the provider color. The gauge returns at 10% or more; stale and rate-limited readings retain their existing state markers.
+- **Low quota keeps the same width.** Red indicates a near-exhausted window; a red slash indicates exhaustion. Used and remaining percentages for both windows are in the tooltip, VoiceOver label, and popover. A grey dash means no reading; a grey slash means Claude did not list that limit. Neither means 0% used.
 - The **letter on the left** (`C` / `X`) is a second identity cue that does not depend on color, so the providers remain distinguishable for color-blind users or when similar outline colors are selected.
 
 When a provider **explicitly reports failure**, the app never presents old data as current. If a previous value exists, it is marked Stale with its fetch time; without trustworthy data, the app shows Unavailable. The design rule is that **unknown is never drawn as 0%**. The Codex decoder rejects out-of-range or non-integer percentages instead of clamping malformed input into a plausible-looking 0 or 100.
@@ -74,7 +74,7 @@ Agent Usage Bar normally runs as a menu-bar utility and **does not occupy the Do
 
 If both providers are disabled, a neutral menu-bar icon remains as an entry point; otherwise Settings would become unreachable.
 
-When menu-bar space is tight, especially on notched Macs, Settings can switch to **Combined Display**. Both gauges are drawn in one icon at half the width while keeping their letters and outline colors. Clicking the combined item shows readings for both providers.
+When menu-bar space is tight, Settings can switch to **Combined Display**. Both providers share one status item, saving one allocation of system padding while keeping their letters and outline colors. Clicking the combined item shows readings for both providers.
 
 The popover first expands to fit all content and enables scrolling only when the screen is genuinely too small. Reopening Settings moves the window to the current Space instead of taking the user back to the Space where it was previously opened.
 
@@ -144,13 +144,13 @@ The app intentionally does not launch an interactive CLI automatically, perform 
 
 The `/usage` output carries the same figures twice: a structured usage report and text printed for a person. They behave differently when the data cannot be fetched.
 
-**With a report.** When Claude Code cannot reach the usage service, the report has no limit rows. The app treats that as a failed query, keeps the previous reading, and marks it Stale instead of showing a new number. Observed on October 11, 2026 with the network blocked: the text still printed the earlier figures while the report had no rows. When the report does have rows, the figures are at most about a minute old, because Claude Code briefly reuses a fresh answer.
+**With a report.** A null `rate_limits` or `limits` means no reading was obtained. The app keeps the previous reading, marks it Stale, and does not read possibly cached prose. An actual list is read as supplied: omitted meters or an empty list never become 0% or get filled from text. One CLI version briefly reused a recent report in testing on October 11, 2026; there is no documented maximum age guarantee.
 
 **Without a report** (an older Claude Code, or a sign-in the report is not offered for), the app can only read the text, and when offline the text **silently falls back to Claude Code's local cache**. In one controlled observation on August 28, 2026, a Wi-Fi-only Mac still returned the previous window's complete stale data after Wi-Fi was disabled and the known reset time passed. Only another query after Wi-Fi was restored returned the new window. Command duration cannot prove connectivity because observed online and offline times overlapped, and the output itself does not include the time when the data was obtained.
 
 The app therefore treats reset time as a freshness boundary, whichever of the two the figures came from. Before reset, a cache entry still belongs to the current window. After reset, it describes a window that has ended and is shown as Unavailable instead of as a percentage.
 
-This guard applies independently to both required session and weekly windows. If either window has passed its reset time, the complete reading is unavailable. The IANA timezone named by the CLI must also be recognized; the app never guesses using the Mac's local timezone.
+This guard applies independently to each reported general window. A past reset makes the complete query unavailable. The legacy text path still requires both session and weekly meters; structured lists may omit either. The IANA timezone named by the CLI must be recognized, rather than guessed from the Mac's timezone.
 
 **What the guard cannot detect is lag within an active window.** In the worst case, a session number may be up to five hours old while still appearing normal. This is a real tradeoff of moving to the CLI `/usage` path and is documented rather than hidden.
 

@@ -4,6 +4,12 @@ import Foundation
 /// per-model weekly window.
 public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
 
+    /// Wire position is separate from the duration: a sparse Codex notification can
+    /// omit duration, and primary is not a promise that the window lasts five hours.
+    public enum SourceSlot: String, Sendable, Hashable, Codable {
+        case primary, secondary
+    }
+
     public enum Kind: Sendable, Hashable, Codable {
         public init(from decoder: any Decoder) throws {
             self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
@@ -74,12 +80,14 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
     public let group: Group
     public let used: UsedPercent
     public let resetsAt: Date?
-    /// Whether this is the limit currently binding the account.
+    /// Claude's server-selected row for a single-value indicator. This is not proof
+    /// that this particular limit currently blocks requests.
     public let isActive: Bool
     /// `scope.model.display_name` for `weekly_scoped` windows.
     public let modelDisplayName: String?
     /// Provider-supplied window length. `nil` keeps the established Claude labels.
     public let durationMinutes: Int?
+    public let sourceSlot: SourceSlot?
 
     public init(
         kind: Kind,
@@ -88,7 +96,8 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         resetsAt: Date?,
         isActive: Bool,
         modelDisplayName: String? = nil,
-        durationMinutes: Int? = nil
+        durationMinutes: Int? = nil,
+        sourceSlot: SourceSlot? = nil
     ) {
         self.kind = kind
         self.group = group
@@ -97,11 +106,16 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         self.isActive = isActive
         self.modelDisplayName = modelDisplayName
         self.durationMinutes = durationMinutes
+        self.sourceSlot = sourceSlot
     }
 
     /// Stable identity built from kind and model, never from array position.
     public var id: String {
         if let modelDisplayName { "\(kind.rawValue)#\(modelDisplayName)" } else { kind.rawValue }
+    }
+
+    public func hasExpired(at now: Date) -> Bool {
+        resetsAt.map { $0.addingTimeInterval(60) < now } ?? false
     }
 
     public var displayName: String {
@@ -129,6 +143,12 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
                 return "\(duration) · \(modelDisplayName)"
             }
             return duration
+        }
+        if let sourceSlot {
+            if isChinese {
+                return sourceSlot == .primary ? "主要額度（期間未提供）" : "次要額度（期間未提供）"
+            }
+            return sourceSlot == .primary ? "Primary quota (duration unavailable)" : "Secondary quota (duration unavailable)"
         }
         if isChinese {
             return switch kind {

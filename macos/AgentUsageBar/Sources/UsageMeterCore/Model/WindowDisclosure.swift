@@ -10,14 +10,14 @@ import Foundation
 ///
 /// # What a folded row still shows
 ///
-/// Its name, its percentage, and the binding badge. Folding hides the bar and the reset
+/// Its name and percentage. Folding hides the bar and the reset
 /// time; it never hides the figure. That is what makes it safe to remember across
 /// launches with no rule that unfolds a row once it gets urgent.
 ///
 /// # Defaults
 ///
-/// The session window and the all-models weekly window start unfolded: they are the two
-/// every account has. A row scoped to one model starts folded. A kind this build has
+/// Present session and all-models weekly rows start unfolded. Missing-meter placeholders
+/// are not foldable. A row scoped to one model starts folded. A kind this build has
 /// never seen starts unfolded, because the first time a new limit appears it should be
 /// seen whole.
 ///

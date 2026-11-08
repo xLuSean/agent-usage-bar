@@ -48,10 +48,16 @@ public struct UsageSnapshotStore {
 private extension UsageSnapshot {
     func isValidPersistedReading(for expectedProvider: ProviderKind, now: Date?) -> Bool {
         guard provider == expectedProvider,
-              !windows.isEmpty,
+              !windows.isEmpty || (provider == .claude && sourcePath == .claudeCodeCLI && claudeLimitListReported == true),
               provider == .codex || codexAccountUsage == nil,
               codexAccountUsage.map(\.isValid) ?? true,
               hasSafeProviderMetadata else { return false }
+
+        let slots = windows.compactMap(\.sourceSlot)
+        guard Set(windows.map(\.id)).count == windows.count,
+              Set(slots).count == slots.count,
+              provider == .codex || slots.isEmpty,
+              windows.allSatisfy({ ($0.durationMinutes ?? 1) > 0 }) else { return false }
 
         if let now {
             // A future wall-clock timestamp can survive a clock rollback or a damaged
@@ -74,18 +80,17 @@ private extension UsageSnapshot {
         // a source can never cross provider boundaries and fixture data is never real.
         switch (provider, sourcePath) {
         case (.claude, .claudeCodeCLI):
-            // The current Claude decoder produces exactly one session and one weekly
-            // window. Keep its missing-reset rules at the persistence boundary too, so
-            // a damaged or older defaults payload cannot bypass the live fail-closed
-            // decoder during launch. Extra future window kinds remain forward-compatible.
+            // Structured lists can legitimately omit a meter. Old/prose snapshots must
+            // still have both; a missing new metadata field cannot weaken that check.
             let sessions = windows.filter { $0.kind == .session }
             let weeklyAll = windows.filter { $0.kind == .weeklyAll }
-            guard sessions.count == 1,
-                  weeklyAll.count == 1,
-                  let session = sessions.first,
-                  let weekly = weeklyAll.first,
-                  session.resetsAt != nil || session.used.usedPercent == 0,
-                  weekly.resetsAt != nil else { return false }
+            guard sessions.count <= 1, weeklyAll.count <= 1 else { return false }
+            if claudeLimitListReported != true {
+                guard sessions.count == 1, weeklyAll.count == 1 else { return false }
+            }
+            if let session = sessions.first,
+               session.resetsAt == nil && session.used.usedPercent != 0 { return false }
+            if let weekly = weeklyAll.first, weekly.resetsAt == nil { return false }
             return true
         case (.claude, .usageEndpoint),
              (.claude, .messagesFallback),

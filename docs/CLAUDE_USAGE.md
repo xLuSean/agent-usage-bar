@@ -43,13 +43,13 @@ claude --safe-mode --no-session-persistence -p "/usage" --output-format json --v
 | 沒有 `usage_report` | 讀文字（§4） |
 | 沒有 `usage_report`，而且文字只有那份費用摘要 | 回報 `claudeNotSignedIn`（§9） |
 | 有報告，但 `rate_limits` 或 `limits` 是 `null` | 回報 `claudeUsageUnavailable`。**不讀文字** |
-| 有報告，`limits` 是空陣列 | `schemaChanged` |
+| 有報告，`limits` 是空陣列 | 成功取得「沒有列出限制」；兩個固定位置不填入數字 |
 | 有報告，列裡同時有 session 與 weekly | 讀列（§3） |
-| 有報告、有列，但缺 session 或 weekly 其中之一 | 讀文字（§4） |
+| 有報告、有列，但缺 session 或 weekly 其中之一 | 保留已提供的列；缺列標示「未列出此限制」，不讀文字補數字 |
 
 第三列是整個設計的重點。Claude Code 連不上用量服務時，文字照樣印出它最後知道的數字，而且沒有任何標記說那是舊的；報告則直接說「沒有」。這時若退回去讀文字，就是把「這次沒查到」重新變成一個有自信的數字 —— 而報告存在的意義正是擋掉這件事。App 改走失敗路徑：保留自己上一筆成功的讀數並標示為過期。
 
-最後一列是還沒觀察到的形狀。兩段 session 之間沒有進行中的時間窗（§4.1），文字印 `0%` 且沒有 reset；報告可能用一列 `percent: 0`、`resets_at: null` 表示，也可能乾脆不列。若是後者，伺服器確實回答了，文字與列一樣新，所以讀文字，而不是讓 App 在每一段閒置空檔都停在錯誤上。
+官方 [SDKUsageReport](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusagereport) 說明，清單由伺服器決定適用的額度，空陣列代表沒有列出限制，`null` 才是沒有可回報資料。因此有清單時不以文字補上缺列，也不推論缺少的列等於 0% 或無上限。部分方案本來就沒有 5 小時限制；目前 App 不從缺列猜方案種類，只忠實說「未列出此限制」。
 
 沒有附報告有兩種正常原因：Claude Code 版本較舊（官方文件記載 Agent SDK 0.3.273 起才有這個欄位）；或登入不符合附報告的條件 —— 官方列的條件是以 claude.ai 憑證登入、憑證帶有已知方案或讀取方案資料的權限、且帳號不是按用量計費。兩種情況都不是錯誤。第二列是例外：沒有報告、文字又只剩費用摘要，表示 Claude Code 已經沒有登入，見 §9。
 
@@ -66,13 +66,13 @@ claude --safe-mode --no-session-persistence -p "/usage" --output-format json --v
 | `percent` | 已用百分比，0–100 的數字，可以有小數 |
 | `resets_at` | ISO 8601 時間字串，或 `null`。實測同一份輸出裡同時出現帶六位小數秒與不帶小數秒兩種寫法 |
 | `scope.model.display_name`、`scope.surface.display_name` | 這一列適用的模型或介面，當作標籤。先取模型，沒有才取介面 |
-| `is_active` | 伺服器選來代表帳號目前狀態的那一列，顯示為「目前綁定」 |
+| `is_active` | 伺服器替單值指示器選中的列；保留相容資料，但不標示為「目前綁定」，也不控制雙量表的位置 |
 
 **刻意不讀的兩樣：** 每一列的 `severity`，以及 `rate_limits.extra_usage`。前者是伺服器對顏色的建議，而量表顏色只由百分比決定、與 Codex 共用同一套刻度（[UI_SPEC.md](UI_SPEC.md) §3.1）。後者是用量點數的花費，App 顯示的是額度時間窗，不是帳務。`verify.sh` 有護欄防止這兩個 surface 被加回來。
 
 ### 3.1 兩種列，兩種嚴格度
 
-量表與保存的讀數都建立在兩個額度上：session 與 all-models weekly。這兩列 fail closed，任何一項對不上就整份失敗：
+量表固定保留 session 與 all-models weekly 的位置。結構化清單容許其中一列或兩列都未列出；每一個有列出的基本額度仍 fail closed，任何一項對不上就整份失敗：
 
 | 情況 | 結果 |
 |---|---|
@@ -84,7 +84,7 @@ claude --safe-mode --no-session-persistence -p "/usage" --output-format json --v
 | session 的 `resets_at` 是 `null` 而百分比不是 0 | `schemaChanged` —— 非零用量卻沒有 reset 是不完整的資料 |
 | 任一列的 reset 加 60 秒寬限已經過去 | `claudeUsageOutdated`（§7） |
 
-這幾條與文字路徑（§5）及保存層 `UsageSnapshotStore` 的規則相同。保存層若比解碼器嚴，讀數會被靜靜丟掉、每次啟動都重查；有一項測試專門確認「解得出來的都存得進去」。
+重設時間的規則在文字路徑（§5）與保存層 `UsageSnapshotStore` 也相同。結構化清單的快照另帶 `claudeLimitListReported: true`，讓保存層容許合法的缺列或空清單；舊快照與文字路徑沒有這個標記，仍要求兩列齊備。測試確認部分／空清單能往返保存，且不會變成 0%。
 
 其他每一列 —— 現在是各模型的週上限，以後可能是別的 —— 盡力而為：讀得懂就顯示，讀不懂就略過。
 
@@ -97,7 +97,7 @@ claude --safe-mode --no-session-persistence -p "/usage" --output-format json --v
 | 超過 16 列 | 只取前 16 列 |
 | 沒見過的 `kind` | 保留，以它自己的名字顯示 |
 
-理由：一個這個版本讀不懂的新額度，不該把那兩個必要數字一起拖垮；而略過一列永遠不會讓錯的數字出現在畫面上。代價是使用者不會知道有一列被略過。
+理由：一個這個版本讀不懂的新額度，不該把已取得的基本額度一起拖垮。基本額度的缺列有固定提示位置；額外列無法解析時仍會略過，使用者不會知道該額外列被略過。
 
 ## 4. 文字備援
 
@@ -186,7 +186,7 @@ Current session: 0% used
 
 文字連不上伺服器時會安靜地退回 Claude Code 的本機快取。2026-08-28 的一次離線跨窗觀察直接看到上一個窗的百分比與 reset 原封不動回傳；恢復 Wi-Fi 後才取得新窗資料。指令耗時不能用來判斷是否連網，因為離線與連網樣本的時間互相重疊。
 
-守門使用每個必要時間窗的重置時間推出上限：
+文字路徑使用每個必要時間窗的重置時間推出上限：
 
 - 重置時間 + 60 秒寬限 **還沒到** ⇒ 快取寫在當前窗內 ⇒ 最舊不超過一個窗。
 - 重置時間**已經過了** ⇒ 這筆讀數描述一個結束了的窗 ⇒ `claudeUsageOutdated`，顯示不可用。
@@ -197,7 +197,7 @@ session 與 weekly 兩個必要時間窗都逐一檢查；任何一個 reset 已
 
 ### 7.3 守門對報告的列也照樣執行
 
-「有列就夠新」是對單一 CLI 版本的觀察，不是契約。檢查通過時沒有成本，所以兩個必要額度不論來自哪一個來源都過同一道守門。
+「有列就夠新」是對單一 CLI 版本的觀察，不是契約。因此結構化清單中每個有提供的基本額度，也檢查同一道重設時間守門；未列出的額度不帶數字，沒有可檢查的 reset。
 
 ## 8. 文字路徑守門的關鍵假設：一次離線跨窗觀察
 
@@ -219,7 +219,7 @@ resetsAt:      <absolute Unix timestamp>
 
 腳本把仍留在路由表裡的預設路線誤判成 `net=online`；那不是實際連線證據。測試機沒有其他網路介面，Wi-Fi 當時確實關閉。日後不得用路由項目或 `duration_ms` 代替真正的連線狀態。
 
-**守門本身不會被繞過，這一條由 source 保證。** weekly 的重置時間在兩條路徑上都是必要的，session 的才是選用，所以每份被接受的讀數至少帶一個 `resetsAt` 進入檢查。但 weekly 的重置一週才動一次 —— 一份「新 session 重置 + 舊百分比」的讀數，仍可能從還有好幾天才到期的 weekly 重置底下通過。
+**文字路徑至少有一個重設時間，這一條由 source 保證。** 文字必須包含 weekly，且它的重置時間是必要的；session 的才是選用。結構化清單則可以合法缺少 weekly，甚至是空清單：每個有提供的基本額度都檢查 reset，但沒有列出的窗不顯示數字。任何路徑都無法單憑尚未到期的 reset 保證窗內百分比即時。
 
 這次結果支持現行守門，但證據範圍只有**單一樣本、單一 CLI 版本**。正確說法是「這次沒有發生 (B)」，不是「Claude Code 永遠不會發生 (B)」。Claude Code 2.1.243 的更新紀錄提到修正過「時間窗重設後、session 閒置期間仍顯示重設前的百分比」，那正是 (B) 這一類行為；這個觀察早於該版本，尚未在新版重做。
 
@@ -299,9 +299,9 @@ stdout 是 `--verbose` 的陣列時，只取 `result` 訊息自己的文字來�
 
 `/usage` 的文字稱短期限制為 `Current session`，報告稱它 `session`，兩者都沒有「5 hours」。App 沿用既有的 5 小時標籤（`UsageWindow.Kind.session`）以維持 UI 一致，但那是一個**映射，不是它自己說的**。`Current week (all models)`／`weekly_all` 對到 `weeklyAll`，`weekly_scoped` 對到 `weeklyScoped` 並以「7 天 · 標籤」顯示。
 
-「目前綁定」只來自報告的 `is_active`。文字沒有說哪一個限制正在綁定，所以走文字路徑時 `isActive` 一律為 `false` —— 從百分比高低猜會把「目前綁定」的標記貼在一個推論上。
+官方只把 `is_active` 定義為伺服器替單值指示器選中的列，不保證就是當下阻擋使用的限制。App 不再顯示「目前綁定」標記；文字路徑沒有這個欄位，`isActive` 一律為 `false`。
 
-選單列量表不受 `is_active` 影響，仍然顯示最短的那個時間窗（[UI_SPEC.md](UI_SPEC.md) §1）。
+選單列的共用外框固定左側 5 小時、右側所有模型共用的 7 天，不受 `is_active` 影響（[UI_SPEC.md](UI_SPEC.md) §1）。
 
 ## 12. 沒有採用的其他指令
 

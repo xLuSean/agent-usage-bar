@@ -17,6 +17,9 @@ enum PopoverRenderCheck {
     static let scenarios: [DemoScenario] = [
         .healthy,
         .betweenWindows,
+        .missingSession,
+        .missingWeekly,
+        .noLimits,
         .throttled,
         .outdatedReading,
         .notLoggedIn,
@@ -367,6 +370,18 @@ enum PopoverRenderCheck {
                 let settingsCell = settingsImages.first?.1.size ?? settingsSize
                 try writeStrip(settingsImages, cellSize: settingsCell, to: settingsPath)
                 print("wrote \(settingsPath)")
+                let baseURL = URL(fileURLWithPath: path).deletingPathExtension()
+                if let combined = images.first(where: { $0.0 == "Combined popover / Dark" }) {
+                    try writeSingle(combined, to: baseURL.appendingPathExtension("combined-dark.png"))
+                }
+                for (prefix, suffix) in [
+                    ("Settings / English / Dark", "settings-en-dark.png"),
+                    ("Settings / 繁體中文 / Dark", "settings-zh-dark.png"),
+                ] {
+                    if let entry = settingsImages.first(where: { $0.0.hasPrefix(prefix) }) {
+                        try writeSingle(entry, to: baseURL.appendingPathExtension(suffix))
+                    }
+                }
             } catch {
                 check(false, "Failed to write PNG: \(error)")
             }
@@ -374,6 +389,23 @@ enum PopoverRenderCheck {
 
         print(failures == 0 ? "\npopover render check passed" : "\npopover render check FAILED: \(failures) items")
         return failures == 0 ? 0 : 1
+    }
+
+    private static func writeSingle(_ entry: (String, NSImage, NSColor), to url: URL) throws {
+        let bounds = NSRect(origin: .zero, size: entry.1.size)
+        let image = NSImage(size: bounds.size, flipped: false) { _ in
+            entry.2.setFill()
+            NSBezierPath(rect: bounds).fill()
+            entry.1.draw(in: bounds)
+            return true
+        }
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try png.write(to: url)
+        print("wrote \(url.path)")
     }
 
     private static func writeStrip(_ images: [(String, NSImage, NSColor)], cellSize contentSize: NSSize, to path: String) throws {

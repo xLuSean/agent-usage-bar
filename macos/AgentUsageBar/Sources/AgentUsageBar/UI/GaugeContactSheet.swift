@@ -3,7 +3,7 @@ import AppKit
 import UsageMeterCore
 
 /// Renders every gauge state to a PNG so the menu bar artwork can be reviewed without
-/// squinting at a 21-point icon. Development aid, reachable only via `--render-sheet`.
+/// squinting at a 27-point icon. Development aid, reachable only via `--render-sheet`.
 ///
 /// Each provider is drawn twice, once per appearance, because the gauge is not a
 /// template image: AppKit will not adapt it, and a colour that reads on a dark menu
@@ -14,7 +14,7 @@ enum GaugeContactSheet {
     private static let rowHeight = GaugeImageRenderer.size.height * scale + 18
     private static let headerHeight: CGFloat = 36
     private static let labelWidth: CGFloat = 250
-    private static let cellWidth = GaugeImageRenderer.lowQuotaSize.width * scale + 28
+    private static let cellWidth = GaugeImageRenderer.size.width * scale + 28
 
     private struct Column {
         let provider: ProviderKind
@@ -147,17 +147,17 @@ enum GaugeContactSheet {
 
     /// A compact, synthetic-only view of the production renderer at 1x and 2.5x.
     private static func writeLowQuotaPreview(to url: URL) throws {
-        let image = NSImage(size: NSSize(width: 640, height: 230), flipped: true) { _ in
+        let image = NSImage(size: NSSize(width: 720, height: 230), flipped: true) { _ in
             NSColor.white.setFill()
-            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 640, height: 230)).fill()
+            NSBezierPath(rect: NSRect(x: 0, y: 0, width: 720, height: 230)).fill()
             drawText("Synthetic data · production renderer · 1x / 2.5x", at: NSPoint(x: 16, y: 10), color: .black)
             for (index, title) in ["9% remaining", "0% remaining", "Combined: 9% + 1%"].enumerated() {
-                drawText(title, at: NSPoint(x: 16 + CGFloat(index) * 208, y: 34), bold: true, color: .black)
+                drawText(title, at: NSPoint(x: 16 + CGFloat(index) * 232, y: 34), bold: true, color: .black)
             }
             for (dark, rowTop) in [(false, CGFloat(56)), (true, CGFloat(142))] {
                 let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)!
                 (dark ? NSColor(white: 0.13, alpha: 1) : NSColor(white: 0.97, alpha: 1)).setFill()
-                NSBezierPath(rect: NSRect(x: 8, y: rowTop, width: 624, height: 82)).fill()
+                NSBezierPath(rect: NSRect(x: 8, y: rowTop, width: 704, height: 82)).fill()
                 appearance.performAsCurrentDrawingAppearance {
                     func entry(_ provider: ProviderKind, _ scenario: DemoScenario) -> (model: GaugeRenderModel, identityColor: NSColor) {
                         (GaugeStyleResolver.renderModel(provider: provider, state: scenario.state(provider: provider)),
@@ -171,7 +171,7 @@ enum GaugeContactSheet {
                         GaugeImageRenderer.combinedImage(for: [entry(.claude, .lowSession), entry(.codex, .lastPercent)]),
                     ]
                     for (index, badge) in images.enumerated() {
-                        let x = 16 + CGFloat(index) * 208
+                        let x = 16 + CGFloat(index) * 232
                         draw(badge, size: badge.size, x: x, rowTop: rowTop - 4, appearance: appearance)
                         draw(badge, size: NSSize(width: badge.size.width * 2.5, height: badge.size.height * 2.5),
                              x: x + 68, rowTop: rowTop - 4, appearance: appearance)

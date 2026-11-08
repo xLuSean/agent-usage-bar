@@ -37,39 +37,40 @@ public enum GaugeFrameStyle: Sendable, Hashable {
     case disabledNeutral
 }
 
-public struct GaugeRenderModel: Sendable, Hashable {
-    public let provider: ProviderKind
+public struct GaugeWindowRenderModel: Sendable, Hashable {
+    public enum Availability: Sendable, Hashable {
+        case reported
+        case notListed
+        case unknown
+    }
+
     public let fillLevel: GaugeFillLevel
     public let frameStyle: GaugeFrameStyle
-    /// 0…1 of the inner height. Zero when there is nothing trustworthy to fill with.
     public let fillFraction: Double
-    /// Drawn inside/next to the frame as the non-colour identity cue.
-    public let glyph: String
-    public let accessibilityLabel: String
+    public let availability: Availability
+}
 
-    /// Switch only a current reading to the compact remaining-quota badge. Keep
-    /// stale, throttled and unknown artwork intact so quantity cannot hide state.
-    /// Match UsedPercent's whole-percent display boundary, including 0% remaining.
-    public var lowRemainingPercent: Int? {
-        guard frameStyle == .solid, fillLevel != .unknown,
-              fillFraction.isFinite, (0...1).contains(fillFraction) else { return nil }
-        let remaining = 100 - Int((fillFraction * 100).rounded())
-        return remaining < 10 ? remaining : nil
-    }
+/// One provider, one shared frame, two fixed slots. Neither slot falls back to the
+/// other quota or to a model-scoped weekly meter.
+public struct GaugeRenderModel: Sendable, Hashable {
+    public let provider: ProviderKind
+    public let session: GaugeWindowRenderModel
+    public let weekly: GaugeWindowRenderModel
+    public let frameStyle: GaugeFrameStyle
+    public var glyph: String { provider.identityLetter }
+    public let accessibilityLabel: String
 
     public init(
         provider: ProviderKind,
-        fillLevel: GaugeFillLevel,
+        session: GaugeWindowRenderModel,
+        weekly: GaugeWindowRenderModel,
         frameStyle: GaugeFrameStyle,
-        fillFraction: Double,
-        glyph: String,
         accessibilityLabel: String
     ) {
         self.provider = provider
-        self.fillLevel = fillLevel
+        self.session = session
+        self.weekly = weekly
         self.frameStyle = frameStyle
-        self.fillFraction = fillFraction
-        self.glyph = glyph
         self.accessibilityLabel = accessibilityLabel
     }
 }
@@ -130,21 +131,30 @@ public enum GaugeStyleResolver {
         calendar: Calendar = .current,
         locale: Locale = Locale(identifier: "en_US")
     ) -> GaugeRenderModel {
-        let window = state.snapshot?.representativeWindow
         let frameStyle = frameStyle(for: state)
-        let level: GaugeFillLevel = {
-            // A dashed-empty frame means there is nothing to trust; drawing a fill
-            // would be the "pretend unknown is 0%" mistake in a different shade.
-            if frameStyle == .dashedEmpty { return .unknown }
-            return fillLevel(for: window)
-        }()
-        let fraction: Double = level == .unknown ? 0 : (window?.used.usedFraction ?? 0)
+        func segment(_ kind: UsageWindow.Kind) -> GaugeWindowRenderModel {
+            guard let window = state.snapshot?.quotaWindow(for: kind) else {
+                let notListed = state.snapshot?.isQuotaNotListed(kind) == true
+                return GaugeWindowRenderModel(
+                    fillLevel: .unknown,
+                    frameStyle: notListed ? .disabledNeutral : .dashedEmpty,
+                    fillFraction: 0,
+                    availability: notListed ? .notListed : .unknown
+                )
+            }
+            let expired = window.hasExpired(at: now)
+            return GaugeWindowRenderModel(
+                fillLevel: fillLevel(for: window),
+                frameStyle: frameStyle == .solid && expired ? .staleMarked : frameStyle,
+                fillFraction: window.used.usedFraction,
+                availability: .reported
+            )
+        }
         return GaugeRenderModel(
             provider: provider,
-            fillLevel: level,
+            session: segment(.session),
+            weekly: segment(.weeklyAll),
             frameStyle: frameStyle,
-            fillFraction: fraction,
-            glyph: provider.identityLetter,
             accessibilityLabel: accessibilityLabel(
                 provider: provider, state: state, now: now, locale: locale
             )
@@ -159,49 +169,55 @@ public enum GaugeStyleResolver {
         now: Date = Date(),
         locale: Locale = .current
     ) -> String {
-        let name = provider.displayName
-        if TimeFormatting.usesTraditionalChinese(locale) {
-            guard let window = state.snapshot?.representativeWindow else {
-                let reason = state.error?.shortDescription(locale: locale)
-                    ?? state.statusLabel(locale: locale)
-                return "\(name) 額度未知，\(reason)"
+        let chinese = TimeFormatting.usesTraditionalChinese(locale)
+        let readings = [UsageWindow.Kind.session, .weeklyAll].map { kind in
+            let title = kind == .session ? (chinese ? "5 小時" : "5 hours") : (chinese ? "7 天" : "7 days")
+            guard let window = state.snapshot?.quotaWindow(for: kind) else {
+                if state.snapshot?.isQuotaNotListed(kind) == true {
+                    return chinese ? "\(title)未列出此限制" : "\(title): no limit listed by the service"
+                }
+                return chinese ? "\(title)額度未知（尚未提供）" : "\(title): usage unknown (not reported)"
             }
-            let usage = "\(name) \(window.displayName(locale: locale))額度已用約 \(window.used.usedPercent)%，剩餘約 \(window.used.remainingPercent)%"
+            let reading = chinese
+                ? "\(title)額度已用約 \(window.used.usedPercent)%，剩餘約 \(window.used.remainingPercent)%"
+                : "\(title), approximately \(window.used.usedPercent)% used, \(window.used.remainingPercent)% remaining"
+            if window.hasExpired(at: now) {
+                return reading + (chinese ? "（已過重設時間，等待更新）" : " (past reset, waiting for an update)")
+            }
+            return reading
+        }
+        let usage = ([provider.displayName] + readings).joined(separator: chinese ? "；" : "; ")
+        if chinese {
             switch state {
             case .current:
-                return "\(usage)，資料為最新"
+                return "\(usage)，最近查詢成功"
             case .refreshing:
                 return "\(usage)，正在更新"
             case .starting:
-                return "\(name) 額度未知，啟動中"
+                return "\(usage)，啟動中"
             case .stale(let snapshot, let reason):
                 let time = TimeFormatting.timeOfDay(snapshot.fetchedAt, locale: locale)
                 return "\(usage)，資料過期，最後更新於 \(time)，原因：\(reason.shortDescription(locale: locale))"
             case .throttled(_, let until):
                 return "\(usage)，已被限流，預計 \(TimeFormatting.relative(from: now, to: until, locale: locale)) 後恢復"
             case .unavailable(let error):
-                return "\(name) 額度不可用，\(error.shortDescription(locale: locale))"
+                return "\(usage)，\(error.shortDescription(locale: locale))"
             }
         }
-        guard let window = state.snapshot?.representativeWindow else {
-            let reason = state.error?.shortDescription(locale: locale) ?? state.statusLabel(locale: locale)
-            return "\(name) usage unknown: \(reason)"
-        }
-        let usage = "\(name), \(window.displayName(locale: locale)), approximately \(window.used.usedPercent)% used, \(window.used.remainingPercent)% remaining"
         switch state {
         case .current:
-            return "\(usage), data is current"
+            return "\(usage), last query succeeded"
         case .refreshing:
             return "\(usage), refreshing"
         case .starting:
-            return "\(name) usage unknown, starting"
+            return "\(usage), starting"
         case .stale(let snapshot, let reason):
             let time = TimeFormatting.timeOfDay(snapshot.fetchedAt, locale: locale)
             return "\(usage), stale data last updated at \(time), reason: \(reason.shortDescription(locale: locale))"
         case .throttled(_, let until):
             return "\(usage), rate limited, expected to recover in \(TimeFormatting.relative(from: now, to: until, locale: locale))"
         case .unavailable(let error):
-            return "\(name) usage unavailable: \(error.shortDescription(locale: locale))"
+            return "\(usage), \(error.shortDescription(locale: locale))"
         }
     }
 }

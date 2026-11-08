@@ -289,29 +289,60 @@ private struct ProviderSection: View {
 
     @ViewBuilder
     private var windowsSection: some View {
-        if let snapshot = presenter.state.snapshot {
-            VStack(alignment: .leading, spacing: 10) {
-                // Variable count on purpose: 5h, 7d, and any number of per-model weekly
-                // windows. Nothing here assumes exactly two.
-                ForEach(snapshot.orderedWindows) { window in
-                    WindowRow(
-                        window: window,
-                        isTrustworthy: presenter.state.isDataTrustworthyAsCurrent,
-                        language: language,
-                        missingReset: missingResetPresentation(for: window),
-                        isCollapsed: disclosure.isCollapsed(window, provider: presenter.provider),
-                        onToggle: {
-                            disclosure.toggle(window, provider: presenter.provider)
-                            onContentHeightChange()
-                        }
-                    )
-                }
+        VStack(alignment: .leading, spacing: 10) {
+            quotaRow(.session)
+            quotaRow(.weeklyAll)
+            // Preserve every additional readable meter after the two fixed slots.
+            ForEach(additionalWindows) { window in
+                windowRow(window)
             }
-        } else {
-            Text("No trustworthy usage data is currently available.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
+    }
+
+    private var additionalWindows: [UsageWindow] {
+        guard let snapshot = presenter.state.snapshot else { return [] }
+        let shown = Set([UsageWindow.Kind.session, .weeklyAll].compactMap {
+            snapshot.quotaWindow(for: $0)?.id
+        })
+        return snapshot.orderedWindows.filter { !shown.contains($0.id) }
+    }
+
+    @ViewBuilder
+    private func quotaRow(_ kind: UsageWindow.Kind) -> some View {
+        if let window = presenter.state.snapshot?.quotaWindow(for: kind) {
+            windowRow(window)
+        } else {
+            let notListed = presenter.state.snapshot?.isQuotaNotListed(kind) == true
+            HStack(alignment: .firstTextBaseline) {
+                Text(kind == .session
+                     ? language.text(chinese: "5 小時", english: "5 hours")
+                     : language.text(chinese: "7 天", english: "7 days"))
+                    .font(.callout).bold()
+                Spacer()
+                Text(notListed
+                     ? language.text(chinese: "未列出此限制", english: "No limit listed")
+                     : language.text(chinese: "尚無資料", english: "Not reported"))
+                    .font(.callout)
+            }
+            .foregroundStyle(.secondary)
+            .help(notListed
+                  ? language.text(chinese: "Claude 的這次額度清單沒有列出這項限制；不代表 0% 或無上限。", english: "Claude did not list this meter in its report. This does not mean 0% used or unlimited usage.")
+                  : language.text(chinese: "尚未取得這個時間窗的可信讀數。", english: "No trustworthy reading is available for this window."))
+        }
+    }
+
+    private func windowRow(_ window: UsageWindow) -> some View {
+        WindowRow(
+            window: window,
+            isTrustworthy: presenter.state.isDataTrustworthyAsCurrent && !window.hasExpired(at: now),
+            language: language,
+            missingReset: missingResetPresentation(for: window),
+            isCollapsed: disclosure.isCollapsed(window, provider: presenter.provider),
+            onToggle: {
+                disclosure.toggle(window, provider: presenter.provider)
+                onContentHeightChange()
+            }
+        )
     }
 
     /// The providers share row layout, not the meaning of a missing field. Claude has
@@ -622,12 +653,6 @@ private struct WindowRow: View {
                         .frame(width: 10)
                         .accessibilityHidden(true)
                     Text(verbatim: name).font(.callout).bold()
-                    if window.isActive {
-                        Text("Currently binding")
-                            .font(.caption2)
-                            .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(.quaternary, in: Capsule())
-                    }
                     Spacer()
                     Text(verbatim: usedText)
                         .font(.callout)

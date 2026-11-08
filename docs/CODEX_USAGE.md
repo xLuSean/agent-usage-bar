@@ -45,16 +45,17 @@ App 優先讀 `rateLimitsByLimitId.codex`；沒有時才使用官方保留的向
 
 | 欄位 | App 的處理 |
 |---|---|
-| `primary` | 量表代表窗，映射為 session window |
-| `secondary` | 顯示於詳情，`codex` bucket 映射為 weekly window |
+| `primary`、`secondary` | 原始位置保存在 `sourceSlot`，供局部推播比對；位置不代表期間 |
 | `usedPercent` | 必須是 `0...100` 的整數；決定數字與共用量表顏色 |
-| `windowDurationMins` | 可缺或為 `null`；有值時必須是整數 |
+| `windowDurationMins` | 可缺或為 `null`；有值時必須是正整數。300 對應 5 小時，10,080 對應 7 天；其他期間保留於詳情，缺期間時不放入任一固定量表 |
 | `resetsAt` | 可缺或為 `null`；有值時必須是 Unix seconds 整數 |
 | `credits`、`planType` | 有值時顯示於詳情 |
 | `rateLimitReachedType`、`spendControlReached` | 保留上游限制狀態，但不改寫共用顏色刻度 |
 | initialize 的 `userAgent` | 顯示資料來源版本，供診斷使用 |
 
 `rateLimitResetCredits` 可能出現在官方回應中，但 App 不解析或保存 opaque credit ID，也沒有 consume 方法。
+
+只有週窗時，5 小時的圖示半格與詳情列保留未知；不把週窗搬到左邊，也不補 0%。同一份回應有兩個一般窗宣稱相同的已知期間時，整份拒絕，避免任選一個數字。
 
 `account/usage/read` 只取以下欄位：
 
@@ -78,7 +79,7 @@ JSON-RPC request ID、error code 與 provider 的整數欄位共用同一套精�
 
 合併規則是：
 
-- 只更新 notification 實際提供且 window identity 相符的欄位。
+- 只更新 notification 實際提供且原始 `sourceSlot` 相符的窗；期間變更不會讓通知誤更新另一個窗。舊快照缺少這個新欄位時，依舊解碼器原本的位置映射相容比對。
 - 部分時間窗更新會沿用已知的期間長度，以及仍有效的重置時間。已到期或與新期間長度不符的重置時間會捨棄。
 - 缺少或 `null` 的 optional metadata 不會清掉已知的 weekly、Credits、plan 或來源版本。
 - notification 不含帳號 Token 統計，因此會保留上次完整 `account/usage/read` 的正規化結果。

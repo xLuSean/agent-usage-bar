@@ -126,6 +126,10 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
     /// Optional Codex account totals from `account/usage/read`. Never derived from local
     /// task files. `nil` means the endpoint or a trustworthy payload was unavailable.
     public let codexAccountUsage: CodexAccountUsage?
+    /// A structured Claude report supplied an actual limit list, including an empty
+    /// list. Missing rows then mean "not listed by the service", never zero or an
+    /// unlimited allowance. Nil preserves the stricter legacy/prose contract.
+    public let claudeLimitListReported: Bool?
 
     public init(
         provider: ProviderKind,
@@ -138,7 +142,8 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
         spendControlReached: Bool? = nil,
         meteredLimitID: String? = nil,
         sourceVersion: String? = nil,
-        codexAccountUsage: CodexAccountUsage? = nil
+        codexAccountUsage: CodexAccountUsage? = nil,
+        claudeLimitListReported: Bool? = nil
     ) {
         self.provider = provider
         self.sourcePath = sourcePath
@@ -151,22 +156,39 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
         self.meteredLimitID = meteredLimitID
         self.sourceVersion = sourceVersion
         self.codexAccountUsage = codexAccountUsage
+        self.claudeLimitListReported = claudeLimitListReported
     }
 
-    /// The window the menu bar gauge shows: the **shortest** one, not the binding one.
-    ///
-    /// This started as whichever limit is currently binding (`is_active`). In use that
-    /// turned out to read wrong: a weekly window can be the
-    /// binding limit for days at a stretch, so the gauge sat on a number that barely
-    /// moved while the five-hour window — the one that actually stops work within the
-    /// hour, and the one that resets soon enough to be worth watching — was invisible.
-    ///
-    /// A glanceable meter should track the fast-moving figure. The binding limit is
-    /// still shown in the popover, badged 目前綁定, where there is room to read it.
+    /// Convenience for consumers needing one row. The menu bar does not use this:
+    /// its two fixed slots must never substitute one quota for the other.
     public var representativeWindow: UsageWindow? {
         windows.first { $0.kind == .session }
             ?? windows.first { $0.isActive }
             ?? windows.first
+    }
+
+    /// The two general quotas, independently selected. Codex's nullable duration must
+    /// be known before a reading may be labelled five hours or seven days. This also
+    /// reads old snapshots whose kind was inferred only from primary/secondary.
+    public func quotaWindow(for kind: UsageWindow.Kind) -> UsageWindow? {
+        let matches = windows.filter { window in
+            if provider == .codex {
+                guard meteredLimitID == nil || meteredLimitID == "codex",
+                      window.modelDisplayName == nil else { return false }
+                switch kind {
+                case .session: return window.durationMinutes == 300
+                case .weeklyAll: return window.durationMinutes == 10_080
+                default: return false
+                }
+            }
+            return window.kind == kind
+        }
+        return matches.count == 1 ? matches.first : nil
+    }
+
+    public func isQuotaNotListed(_ kind: UsageWindow.Kind) -> Bool {
+        provider == .claude && claudeLimitListReported == true
+            && !windows.contains { $0.kind == kind }
     }
 
     /// Windows in a stable display order regardless of upstream array order.
@@ -199,7 +221,8 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
             spendControlReached: spendControlReached,
             meteredLimitID: meteredLimitID,
             sourceVersion: sourceVersion,
-            codexAccountUsage: accountUsage
+            codexAccountUsage: accountUsage,
+            claudeLimitListReported: claudeLimitListReported
         )
     }
 }

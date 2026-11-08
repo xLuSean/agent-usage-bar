@@ -247,7 +247,10 @@ private struct ProvidersSettingsTab: View {
                     }
                 }
                 if model.menuBarLayout == .combined {
-                    Text("Draws both gauges in one icon, using about half the width. Each provider keeps its letter and outline color, so they remain distinguishable. Use this when menu bar space is limited.")
+                    Text(model.displayLanguage.text(
+                        chinese: "兩家共用一個選單列項目，減少系統留白。每家保留字母與外框顏色；同一外框內左側是 5 小時，右側是 7 天。",
+                        english: "Combines both providers in one status item to reduce system padding. Each keeps its letter and outline color, with 5 hours on the left and 7 days on the right inside one frame."
+                    ))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }

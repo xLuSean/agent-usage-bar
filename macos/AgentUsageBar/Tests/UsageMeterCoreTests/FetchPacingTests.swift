@@ -463,6 +463,29 @@ struct UsageSnapshotStoreTests {
         #expect(loadStore.load(.claude) == nil)
     }
 
+    @Test("損壞的期間與重複時間窗身分不能從快照繞過解碼檢查")
+    func rejectsDamagedCodexWindowMetadata() throws {
+        for damage in ["duration", "identity", "sourceSlot"] {
+            let (store, defaults) = makeStore()
+            try writeRaw(codexSnapshot(resetAt: nil), under: .codex, defaults: defaults) { object in
+                var rows = try #require(object["windows"] as? [[String: Any]])
+                switch damage {
+                case "duration": rows[0]["durationMinutes"] = 0
+                case "identity": rows.append(rows[0])
+                default:
+                    rows[0]["sourceSlot"] = "primary"
+                    var other = rows[0]
+                    other["kind"] = "weekly_all"
+                    other["group"] = "weekly"
+                    other["durationMinutes"] = 10_080
+                    rows.append(other)
+                }
+                object["windows"] = rows
+            }
+            #expect(store.load(.codex) == nil)
+        }
+    }
+
     @Test("Codex 合法的 nil reset 保存規則維持不變")
     func acceptsCodexWindowWithoutReset() throws {
         let (store, _) = makeStore()

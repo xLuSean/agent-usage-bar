@@ -51,16 +51,53 @@ struct CodexRateLimitDecoderTests {
         #expect(snapshot.credits?.displayDescription == "12.50")
         #expect(snapshot.sourceVersion == "codex-cli/0.148.0")
 
-        let primary = try #require(snapshot.windows.first { $0.isActive })
+        let primary = try #require(snapshot.windows.first { $0.sourceSlot == .primary })
         #expect(primary.used.usedPercent == 25)
         #expect(primary.used.remainingPercent == 75)
         #expect(primary.displayName == "15 minutes")
         #expect(primary.resetsAt == Date(timeIntervalSince1970: 1_730_947_200))
+        #expect(snapshot.quotaWindow(for: .session) == nil)
+        #expect(snapshot.windows.allSatisfy { !$0.isActive })
 
         let secondary = try #require(snapshot.windows.first { $0.kind == .weeklyAll })
         #expect(secondary.used.usedPercent == 62)
         #expect(secondary.displayName == "7 days")
         #expect(snapshot.windows.allSatisfy { $0.used.usedPercent != 88 })
+    }
+
+    @Test("依實際期間分類，primary 可以是週額度，secondary 可以是五小時")
+    func durationsDetermineSlotsRatherThanPosition() throws {
+        let data = Data(#"{"rateLimits":{"primary":{"usedPercent":51,"windowDurationMins":10080},"secondary":{"usedPercent":12,"windowDurationMins":300}}}"#.utf8)
+        let snapshot = try CodexRateLimitDecoder.decode(data, fetchedAt: now)
+        #expect(snapshot.quotaWindow(for: .session)?.used.usedPercent == 12)
+        #expect(snapshot.quotaWindow(for: .weeklyAll)?.used.usedPercent == 51)
+        #expect(snapshot.windows.first?.kind == .weeklyAll)
+    }
+
+    @Test("只有週窗或缺少期間時，不虛構五小時讀數")
+    func missingDurationNeverBecomesFiveHours() throws {
+        for duration in ["10080", "null"] {
+            let data = Data("{\"rateLimits\":{\"primary\":{\"usedPercent\":51,\"windowDurationMins\":\(duration)}}}".utf8)
+            let snapshot = try CodexRateLimitDecoder.decode(data, fetchedAt: now)
+            #expect(snapshot.quotaWindow(for: .session) == nil)
+            if duration == "null" {
+                #expect(snapshot.quotaWindow(for: .weeklyAll) == nil)
+                #expect(snapshot.windows.first?.displayName.contains("duration unavailable") == true)
+            }
+        }
+    }
+
+    @Test("不明確的重複期間及非正數期間會失敗，不選任意一個讀數")
+    func rejectsAmbiguousOrInvalidDurations() {
+        for payload in [
+            #"{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":0}}}"#,
+            #"{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":-300}}}"#,
+            #"{"rateLimits":{"primary":{"usedPercent":1,"windowDurationMins":300},"secondary":{"usedPercent":90,"windowDurationMins":300}}}"#,
+        ] {
+            #expect(throws: UsageError.self) {
+                _ = try CodexRateLimitDecoder.decode(Data(payload.utf8), fetchedAt: now)
+            }
+        }
     }
 
     @Test("multi-bucket 缺少 codex 時退回單一 rateLimits")
