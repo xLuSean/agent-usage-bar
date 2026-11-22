@@ -329,7 +329,7 @@ private struct ProviderSection: View {
                 if mode.includesWeekly {
                     quotaRow(.weeklyAll)
                 }
-                // Preserve every additional readable meter after the fixed slots.
+                // Show additional meters that match the selected mode after the fixed slots.
                 ForEach(additionalWindows(for: mode)) { window in
                     windowRow(window)
                 }
@@ -373,16 +373,7 @@ private struct ProviderSection: View {
             let matches = snapshot.orderedWindows.filter { $0.modelDisplayName == name }
             groupFiltered = matches.isEmpty ? snapshot.orderedWindows : matches
         }
-        return groupFiltered.filter { window in
-            switch window.kind {
-            case .session, .sessionScoped:
-                mode.includesSession
-            case .weeklyAll, .weeklyScoped:
-                mode.includesWeekly
-            case .unrecognized:
-                true
-            }
-        }
+        return groupFiltered.filter { mode.includesInPopover($0, provider: snapshot.provider) }
     }
 
     private func additionalWindows(for mode: QuotaWindowDisplayMode) -> [UsageWindow] {
@@ -391,15 +382,7 @@ private struct ProviderSection: View {
             snapshot.quotaWindow(for: $0)?.id
         })
         return snapshot.orderedWindows.filter { window in
-            guard !shown.contains(window.id) else { return false }
-            switch window.kind {
-            case .session, .sessionScoped:
-                return mode.includesSession
-            case .weeklyAll, .weeklyScoped:
-                return mode.includesWeekly
-            case .unrecognized:
-                return true
-            }
+            !shown.contains(window.id) && mode.includesInPopover(window, provider: snapshot.provider)
         }
     }
 

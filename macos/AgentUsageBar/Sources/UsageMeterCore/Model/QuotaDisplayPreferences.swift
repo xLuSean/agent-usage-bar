@@ -20,6 +20,26 @@ public enum QuotaWindowDisplayMode: String, CaseIterable, Sendable, Hashable, Id
         self == .both || self == .weeklyOnly
     }
 
+    /// The full detail view includes every readable quota period.
+    public func includesInPopover(_ window: UsageWindow, provider: ProviderKind) -> Bool {
+        guard self != .both else { return true }
+
+        if provider == .codex {
+            // Older Codex snapshots could infer the kind from the primary or secondary slot.
+            return (includesSession && window.durationMinutes == 300)
+                || (includesWeekly && window.durationMinutes == 10_080)
+        }
+
+        return switch window.kind {
+        case .session, .sessionScoped:
+            includesSession
+        case .weeklyAll, .weeklyScoped:
+            includesWeekly
+        case .unrecognized:
+            false
+        }
+    }
+
     public var displayName: String {
         displayName(locale: Locale(identifier: "en_US"))
     }
