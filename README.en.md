@@ -2,16 +2,16 @@
 
 [繁體中文](README.md) | **English**
 
-A Claude and Codex usage meter for the macOS menu bar. See how much of your subscription allowance you have used without opening a usage page or typing a command.
+A Claude, Codex, and Antigravity usage meter for the macOS menu bar. See how much of your subscription allowance you have used without opening a usage page or typing a command.
 
 > [!WARNING]
 > Apple Silicon alpha release. Builds are ad-hoc signed and **not Apple-notarized**, so they do not carry an Apple-verifiable publisher identity. macOS is expected to require manual approval after downloading the app.
-> Both usage readings come from local CLIs: Claude runs a fixed `/usage` query and prefers its structured report, falling back to text only when no report is attached. Codex uses the read-only App Server interface. Untrustworthy formats produce “Unknown” rather than guessed values.
+> All usage readings come from local official CLIs: Claude and Antigravity each run a fixed read-only `/usage` query, while Codex uses the read-only App Server interface. Untrustworthy formats produce “Unknown” rather than guessed values.
 
 > [!NOTE]
 > **Known Claude issue:** In some cases, the background `/usage` query keeps showing “Response format changed” until the user launches `claude` once in Terminal. If this happens, launch Claude Code, complete any sign-in prompt, return to the app, and click Refresh. The app does not sign you in or repair credentials for you; see the Claude section below for details.
 
-This project is not affiliated with or endorsed by Anthropic or OpenAI. All icons are original and do not use either company's official marks.
+This project is not affiliated with or endorsed by Anthropic, OpenAI, or Google. All icons are original and do not use any company's official marks.
 
 ## Screenshots
 
@@ -22,10 +22,10 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 <p align="center"><sub>Shared-frame gauges at native size and 2.5× in light and dark appearances. Images use the production renderer and synthetic readings.</sub></p>
 
 <p align="center">
-  <img src="docs/images/combined-popover-dark.png" width="320" alt="Combined Claude and Codex usage popover in dark mode">
+  <img src="docs/images/combined-popover-dark.png" width="320" alt="Combined Claude, Codex, and Antigravity usage popover in dark mode">
 </p>
 
-<p align="center"><sub>Combined Claude and Codex usage in dark mode. Every number is synthetic demo data, not real account information.</sub></p>
+<p align="center"><sub>Combined Claude, Codex, and Antigravity usage in dark mode. Every number is synthetic demo data, not real account information.</sub></p>
 
 <p align="center">
   <img src="docs/images/settings-zh-dark.png" width="46%" alt="Settings in Traditional Chinese">
@@ -36,12 +36,12 @@ This project is not affiliated with or endorsed by Anthropic or OpenAI. All icon
 
 ## What it does
 
-Each provider has one shared rectangular gauge, divided into **five hours on the left and seven days on the right**. Fill height represents the percentage already used. Each provider stays at 27 × 18 pt, and the combined image is 57 × 18 pt. Click it to see detailed values for each usage window.
+By default, each provider has one shared rectangular gauge, divided into **five hours on the left and seven days on the right**. Fill height represents the percentage already used. Each provider can independently configure its **Menu Bar Windows** and **Popover Windows** to show “5 hours & 7 days”, “5 hours only”, or “7 days only”. Dual-window gauges stay at 27 × 18 pt, single-window gauges (including Antigravity Free plans with no 5-hour window) render at 20 × 18 pt, and a combined three-provider dual-window image is 87 × 18 pt. Click it to see detailed values for each usage window and Antigravity model group.
 
 - The **outline color** identifies the provider and can be customized.
 - The **fill color** represents usage (0–49% green, 50–79% orange, 80–99% red, and exhaustion at 100%) and cannot be customized. Color depends only on the percentage, not on each provider's own severity label; otherwise the same orange would mean different things on adjacent gauges.
-- **At 10% remaining or less, each window shows its remaining percentage**, including 10% and an exhausted 0%. The number and percent sign are stacked inside that window's existing half, keeping the width fixed. Stale and rate-limited readings retain their status artwork. Used and remaining percentages are also in the tooltip, VoiceOver label, and popover. A grey dash means no reading; a grey slash means Claude did not list that limit. Neither means 0% used.
-- The **letter on the left** (`C` / `X`) is a second identity cue that does not depend on color, so the providers remain distinguishable for color-blind users or when similar outline colors are selected.
+- **At 10% remaining or less, each window shows its remaining percentage**, including 10% and an exhausted 0%. The number and percent sign are stacked inside that window's existing slot, keeping the width fixed. Stale and rate-limited readings retain their status artwork. Used and remaining percentages are also in the tooltip, VoiceOver label, and popover. A grey dash means no reading; a grey slash means Claude did not list that limit. Neither means 0% used.
+- The **letter on the left** (`C` / `X` / `A`) is a second identity cue that does not depend on color, so the providers remain distinguishable for color-blind users or when similar outline colors are selected.
 
 When a provider **explicitly reports failure**, the app never presents old data as current. If a previous value exists, it is marked Stale with its fetch time; without trustworthy data, the app shows Unavailable. The design rule is that **unknown is never drawn as 0%**. The Codex decoder rejects out-of-range or non-integer percentages instead of clamping malformed input into a plausible-looking 0 or 100.
 
@@ -49,15 +49,15 @@ The app retains a visual rate-limited state, but neither current live path is gu
 
 ## Product scope: low permission, privacy first
 
-Agent Usage Bar is not intended to be a complete AI usage analytics platform. It primarily answers: **how much of the current Claude or Codex subscription allowance has been used, and how many tokens has the Codex account used?** The app deliberately does not read or store `auth.json`, OAuth tokens, Keychain credentials, conversation transcripts, task JSONL, or local databases. It also does not provide multi-account switching, cross-device sync, or its own long-term tracking database.
+Agent Usage Bar is not intended to be a complete AI usage analytics platform. It primarily answers: **how much of the current Claude, Codex, or Antigravity subscription allowance has been used, and how many tokens has the Codex account used?** The app deliberately does not read or store `auth.json`, OAuth tokens, Keychain credentials, conversation transcripts, task JSONL, or local databases, nor does it inspect unrelated local background processes. It also does not provide multi-account switching, cross-device sync, or its own long-term tracking database.
 
-The installed and signed-in official CLIs perform the queries: Claude runs a fixed read-only `/usage` command, while Codex uses the read-only App Server methods `account/rateLimits/read` and `account/usage/read`. The latter directly reports lifetime tokens, peak daily tokens, and daily buckets; the app does not reconstruct them by scanning local tasks. Only parsed UI values and the latest snapshot are retained. Sign-in, renewal, and credential storage remain the responsibility of the official tools.
+The installed and signed-in official CLIs perform the queries: Claude and Antigravity each run a fixed read-only `/usage` command, while Codex uses the read-only App Server methods `account/rateLimits/read` and `account/usage/read`. The latter directly reports lifetime tokens, peak daily tokens, and daily buckets; the app does not reconstruct them by scanning local tasks. Only parsed UI values and the latest snapshot are retained. Sign-in, renewal, and credential storage remain the responsibility of the official tools.
 
 This boundary is an intentional product tradeoff, not an unfinished feature list. The app gives up per-request and per-task token history, cached-token breakdowns, cost estimates, and multi-account management, but does not need the conversation content and login access those features would require. When an upstream format or data freshness cannot be trusted, the app shows Unknown instead of reading a more sensitive source to keep the UI populated.
 
 ## Current status
 
-Both **Claude and Codex** are supported. They query, retry, and disable independently, so failure on one side does not block the other.
+**Claude, Codex, and Antigravity** are supported. They query, retry, disable, and configure menu bar vs. popover windows independently, so failure on one side does not block the others.
 
 The app does not accumulate its own usage samples or forecast usage. Usage persistence contains settings and **only the latest reading for each provider**—one snapshot that is overwritten. A Codex snapshot may contain the daily buckets returned by `account/usage/read`, which the popover draws as a daily chart; that is provider-maintained account history, not a sequence collected by this app. Quota and token statistics retain independent fetch timestamps and update on independent schedules; a failure on one side does not erase the other side's trusted result. The chart shows 30 days by default and can be set to 5, 10, 15, 20, 30, or 60 days; this changes only the visible range and does not delete provider data from the snapshot. The popover also shows today's official bucket. If Codex has not reported today yet, it says “Not reported yet” instead of treating the missing value as zero. Settings also include a privacy-safe error history containing time, provider, an app-defined error category, and a closed app-defined detail reason. Each entry can be expanded and its full safe explanation copied. Raw responses and arbitrary provider text are never stored. Logs are retained for five days by default, configurable to three or seven days, and can be cleared at any time.
 
@@ -108,7 +108,7 @@ Older macOS versions may also support the Control-click → Open shortcut; newer
 
 A `.sha256` proves only that the DMG bytes match the checksum you obtained. The checksum must come from a trusted or independent channel to be meaningful and cannot replace the publisher identity provided by Developer ID signing and Apple notarization.
 
-Requirements: macOS 14 or later, Apple Silicon, and a locally installed and signed-in Claude Code and/or Codex CLI for each enabled provider.
+Requirements: macOS 14 or later, Apple Silicon, and a locally installed and signed-in Claude Code, Codex CLI, and/or Antigravity CLI (`agy`) for each enabled provider.
 
 ## Where the data comes from
 
@@ -184,6 +184,18 @@ App Server is one long-lived child process, not a new process for every refresh.
 
 Because a GUI app's `PATH` often differs from Terminal, Settings → Data Sources can specify the Codex executable. Leaving it blank checks common installation locations and the current environment in order. The app verifies only that the path is executable, not its vendor signature; select only a Codex installation you trust. The query does not trigger model inference or consume ordinary Codex conversation allowance.
 
+### Antigravity
+
+The app runs the official Antigravity CLI (`agy`) with a fixed read-only command and decodes its structured JSON quota report:
+
+```bash
+agy -p /usage --output-format json --print-timeout 15s
+```
+
+Verified runs from an isolated empty temporary directory return `status="SUCCESS"`, `conversation_id=""`, `num_turns=0`, and zero token counts—no model inference runs, no quota is consumed, and no conversation is left behind. CLI logs are directed via `--log-file` into the per-query temporary directory and removed on exit. The app never reads credentials, modifies `~/.gemini/antigravity-cli/`, or scans running `language_server` processes.
+
+Because Antigravity groups quotas by model pool (such as `Gemini Models`, `Claude and GPT models`, and `Gemini 4 Argon`), the menu bar tracks `Gemini Models` by default and can be configured independently in Settings to pin another group or “Highest used group”, alongside separate Menu Bar vs. Popover window selectors. When a plan or group has no 5-hour window (such as the Free plan), the menu bar automatically renders a single 7-day gauge. The popover displays all groups by default with per-row collapse persistence. See [Antigravity usage source](docs/ANTIGRAVITY_USAGE.md) for fields, conversion bounds, and unverified items.
+
 ## Development
 
 ```bash
@@ -236,6 +248,7 @@ See [docs/SIGNING.md](docs/SIGNING.md) for signing configuration.
 - [UI spec](docs/UI_SPEC.md) — the gauge visual language shared by both providers
 - [Claude usage source](docs/CLAUDE_USAGE.md) — fixed read-only command, text format, and failure strategy
 - [Codex usage source](docs/CODEX_USAGE.md) — App Server protocol, fields, and failure strategy
+- [Antigravity usage source](docs/ANTIGRAVITY_USAGE.md) — fixed read-only `agy` command, model-group mapping, and Free-plan handling
 - [Retired Keychain path](docs/LEGACY_KEYCHAIN_PATH.md) — lessons from the old credential-and-endpoint approach and when it might be reconsidered
 - [What did not work](docs/WHAT_DID_NOT_WORK.md) — rejected decisions and lessons learned
 - [Verification](docs/VERIFICATION.md) — what is checked and why those guards exist

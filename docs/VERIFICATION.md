@@ -46,12 +46,15 @@
 | guard: unsupported Extra Usage | 正式 source 不得重新加入 `extraUsageEnabled` 或已移除的顯示列 | 兩個 live provider 都沒有穩定唯讀來源；帳務變更指令另由 Claude command guard 禁止 |
 | guard: Codex read-only | 出貨 source 不得出現登入、登出、consume reset credit 或寄信方法 | Codex provider 的授權邊界是帳號唯讀 |
 | guard: Claude command | 只有 `ClaudeUsageCommand.swift` 可建構 `Process`；arguments 清單逐字比對；`Claude/` 下不得出現登入／維護指令、shell，或 `usage-credits`／`extra-usage` | 後兩者帶有購買、申請或開啟額外計費的語意，不得拿來探測資料 |
+| guard: Antigravity command | 只有 `AntigravityUsageCommand.swift` 可建構 `Process`；arguments 清單逐字比對；`Antigravity/` 下不得出現非唯讀子命令或 shell | 確保 `agy` 只執行固定唯讀 `/usage` 查詢，不觸發登入、設定修改或模型回合 |
 | guard: no `rm` | 腳本刪檔一律用 `trash` | 刪錯要救得回來 |
 | `git diff --check` | 空白字元問題 | |
 
 ## 最近驗證節點
 
 這裡保留行為與驗證結果，不引用公開前的內部 commit hash。公開基線以可重跑的 `./scripts/verify.sh`、現行 source 與測試作為長期證據。
+
+2026-11-22，新增 Antigravity 供應商與 Toolbar／Popover 獨立時間窗設定：新增 `AntigravityUsageProvider`（透過固定唯讀 `agy -p /usage --output-format json --print-timeout 15s` 與隔離暫存 `--log-file` 讀取多模型群組額度，要求 `status="SUCCESS"`、`command.name="usage"` 與 `num_turns=0`，`remaining_fraction` 精確換算且極小剩餘不誤判為 100% 耗盡）。所有供應商皆可分別獨立設定選單列與詳情面板顯示「5 小時與 7 天」、「僅 5 小時」或「僅 7 天」；單窗模式與 Antigravity Free／純週額度群組自動以 20 × 18 pt 單槽量表繪製。詳情面板單窗篩選抽至 `QuotaWindowDisplayMode.includesInPopover(_:provider:)`，Codex 依 `durationMinutes`（300／10,080）判斷且單窗模式不再納入未知期間。完整 `./scripts/verify.sh` 通過 **295 項／28 suites**（含 `AntigravityProviderTests` 14 項與 `QuotaDisplayPreferencesTests` 2 項）、Debug／Release Xcode builds、三家合併與單槽隔離 AppKit diagnostics、雙語設定與合併面板繪製、正式設定指紋未變動、Antigravity 靜態唯讀指令護欄與 `git diff --check`。另已檢視正式繪圖器產生的合成預覽圖並更新 `docs/images/` 與中英文 README。尚未建立正式候選版或執行任何 GitHub 遠端操作。
 
 2026-11-07，低額度數字與供應商標題：Claude／Codex 的 5 小時與一般週額度各自以剩餘整數百分比判斷，10% 以下（含 10%）在原半格內改為「數字在上、% 在下」，耗盡顯示 0%；缺值、過期、超過 reset 與限流維持原本狀態標記，不以數字掩蓋。兩半可同時顯示不同剩餘值，每家 27 × 18 pt／合併 57 × 18 pt 不變。Codex Token 區塊標題補上供應商名稱，提供英文與繁中版本。
 

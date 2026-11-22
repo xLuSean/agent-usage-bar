@@ -2,16 +2,16 @@
 
 **繁體中文** | [English](README.en.md)
 
-macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面或輸入查詢指令，一眼看出訂閱額度用了多少。
+macOS 選單列上的 Claude／Codex／Antigravity 額度計量器。不用打開用量頁面或輸入查詢指令，一眼看出訂閱額度用了多少。
 
 > [!WARNING]
 > Apple Silicon alpha 版本。預設採 ad-hoc 簽章、**未經 Apple 公證**，不含 Apple 可驗證的發布者身分；從網路下載後，macOS 預期會要求使用者手動允許開啟。
-> 兩邊的額度都由本機 CLI 提供：Claude 執行固定的 `/usage` 查詢，優先讀結構化報告、沒有報告時才讀文字；Codex 使用 App Server 唯讀介面。格式不可信時 App 顯示「未知」，不猜數字。
+> 三家的額度都由本機官方 CLI 提供：Claude 與 Antigravity 分別執行固定的唯讀 `/usage` 查詢；Codex 使用 App Server 唯讀介面。格式不可信時 App 顯示「未知」，不猜數字。
 
 > [!NOTE]
 > **Claude 已知問題：** 少數情況下，背景 `/usage` 查詢會持續顯示「回應格式已改變」，直到使用者在 Terminal 手動啟動一次 `claude`。遇到時請啟動 Claude Code、完成可能出現的登入提示，再回到 App 按「重新整理」。App 不會代替你登入或修復憑證；詳細限制見下方「Claude」說明。
 
-本專案與 Anthropic、OpenAI 均無隸屬關係，也未獲其背書。所有圖示為原創設計，未使用任何官方標誌。
+本專案與 Anthropic、OpenAI 或 Google 均無隸屬關係，也未獲其背書。所有圖示為原創設計，未使用任何官方標誌。
 
 ## 示意圖
 
@@ -22,10 +22,10 @@ macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面�
 <p align="center"><sub>新版共用外框圖示在原尺寸與 2.5 倍下的深淺色對照。圖像由正式繪圖器產生，所有用量均為合成資料。</sub></p>
 
 <p align="center">
-  <img src="docs/images/combined-popover-dark.png" width="320" alt="Claude 與 Codex 合併模式的深色用量面板">
+  <img src="docs/images/combined-popover-dark.png" width="320" alt="Claude、Codex 與 Antigravity 合併模式的深色用量面板">
 </p>
 
-<p align="center"><sub>合併模式的 Claude／Codex 用量面板。數字全部來自合成 demo data，不是真實帳號資料。</sub></p>
+<p align="center"><sub>合併模式的 Claude／Codex／Antigravity 用量面板。數字全部來自合成 demo data，不是真實帳號資料。</sub></p>
 
 <p align="center">
   <img src="docs/images/settings-zh-dark.png" width="46%" alt="繁體中文設定頁">
@@ -36,12 +36,12 @@ macOS 選單列上的 Claude／Codex 額度計量器。不用打開用量頁面�
 
 ## 它做什麼
 
-每個供應商在選單列有一個共用長方形量表，中線分成**左側 5 小時、右側 7 天**。填色高度代表已用比例，隨消耗往上長。每家固定 27 × 18 pt，兩家合併圖像為 57 × 18 pt；點開可以看到各時間窗的詳細數字。
+每個供應商在選單列預設有一個共用長方形量表，中線分成**左側 5 小時、右側 7 天**。填色高度代表已用比例，隨消耗往上長。每個供應商皆可在設定分別選擇**選單列**與**詳情面板**顯示「5 小時與 7 天」、「僅 5 小時」或「僅 7 天」；雙槽固定 27 × 18 pt、單槽（包含 Antigravity Free 方案自動省略 5 小時時）固定 20 × 18 pt，三家全雙槽合併圖像為 87 × 18 pt。點開可以看到各時間窗與 Antigravity 各模型群組的詳細數字。
 
 - **外框顏色**代表是哪個供應商，可自訂。
-- **內部填色**代表用掉多少（0–49% 綠、50–79% 橘、80–99% 紅、100% 已耗盡），不可自訂。顏色只看百分比，不採用各家自己的嚴重度判定 —— 否則同一個橘色在兩個量表上會代表不同的事。
-- **剩餘 10% 以下直接顯示數字**，含 10% 與耗盡的 0%；5 小時與週額度各自在原本半格內顯示剩餘數字與 `%`，保持固定寬度。過期或限流時保留狀態標記。兩窗的已用與剩餘百分比也列在滑鼠提示、VoiceOver 與詳情；缺資料為灰槓，Claude 清單未列出限制時為灰色斜線，不當成 0%。
-- **左側字母**（`C` / `X`）是不依賴顏色的第二個身分線索，色覺障礙或兩色選得太接近時仍分得出來。
+- **內部填色**代表用掉多少（0–49% 綠、50–79% 橘、80–99% 紅、100% 已耗盡），不可自訂。顏色只看百分比，不採用各家自己的嚴重度判定 —— 否則同一個橘色在不同量表上會代表不同的事。
+- **剩餘 10% 以下直接顯示數字**，含 10% 與耗盡的 0%；5 小時與週額度各自在原本槽內顯示剩餘數字與 `%`，保持固定寬度。過期或限流時保留狀態標記。已用與剩餘百分比也列在滑鼠提示、VoiceOver 與詳情；缺資料為灰槓，Claude 清單未列出限制時為灰色斜線，不當成 0%。
+- **左側字母**（`C` / `X` / `A`）是不依賴顏色的第二個身分線索，色覺障礙或外框顏色選得太接近時仍分得出來。
 
 當 provider **明確回報失敗**時，App 不會拿舊資料假裝是新的：有舊值就明示「過期」並標出取得時間，沒有可信資料就顯示「不可用」。設計原則是**未知狀態絕不畫成 0%**；Codex decoder 會拒絕範圍外或非整數百分比，不把壞資料 clamp 成看似可信的 0／100。
 
@@ -49,15 +49,15 @@ App 保留「限流」的視覺狀態，但目前兩條 live 路徑不一定會�
 
 ## 產品定位：低權限、重隱私
 
-Agent Usage Bar 不追求成為完整的 AI 使用分析平台；它主要回答：**目前的 Claude／Codex 訂閱額度用了多少，以及 Codex 帳號已使用多少 Token。** 為了這個目的，App 刻意不讀取或保存 `auth.json`、OAuth token、鑰匙圈憑證、對話 transcript、任務 JSONL 或本機資料庫，也不提供多帳號切換、跨裝置同步或自行建立的長期用量追蹤。
+Agent Usage Bar 不追求成為完整的 AI 使用分析平台；它主要回答：**目前的 Claude／Codex／Antigravity 訂閱額度用了多少，以及 Codex 帳號已使用多少 Token。** 為了這個目的，App 刻意不讀取或保存 `auth.json`、OAuth token、鑰匙圈憑證、對話 transcript、任務 JSONL 或本機資料庫，也不掃描其他背景程序或提供多帳號切換、跨裝置同步或自行建立的長期用量追蹤。
 
-資料由已安裝且已登入的官方 CLI 代為查詢：Claude 執行固定的唯讀 `/usage`；Codex 使用 App Server 的唯讀 `account/rateLimits/read` 與 `account/usage/read`。後者直接提供累積 Token、最高單日 Token 與每日 buckets；App 不掃描本機 task 來重算。App 只留下畫面需要的解析結果與最近一筆快照；登入、續期與憑證保存仍由官方工具自己負責。
+資料由已安裝且已登入的官方 CLI 代為查詢：Claude 與 Antigravity 分別執行固定的唯讀 `/usage`；Codex 使用 App Server 的唯讀 `account/rateLimits/read` 與 `account/usage/read`。後者直接提供累積 Token、最高單日 Token 與每日 buckets；App 不掃描本機 task 來重算。App 只留下畫面需要的解析結果與最近一筆快照；登入、續期與憑證保存仍由官方工具自己負責。
 
 這個邊界是一項刻意的產品取捨，不是待補齊的功能清單。它沒有逐次／逐 task Token、cache Token 拆解、成本估算與多帳號管理，也因此不需要取得與那些功能相伴的對話內容和登入權限。當上游格式或資料新鮮度無法確認時，App 寧可顯示「未知」，不會為了維持畫面完整而改讀更敏感的資料來源。
 
 ## 目前狀態
 
-支援 **Claude 與 Codex**，兩邊各自查詢、各自退避，也能獨立停用；其中一邊失敗不會拖累另一邊。
+支援 **Claude、Codex 與 Antigravity**，三邊各自查詢、各自退避，也能獨立停用及分別設定選單列與詳情面板顯示的時間窗；其中一邊失敗不會拖累另外兩邊。
 
 App 不累積自己的用量取樣，也不做預測。用量部分只落地設定值與**每個供應商最近一次的讀數** —— 永遠一筆，每次覆蓋。Codex 的這一筆可包含官方 `account/usage/read` 當下提供的每日 buckets，面板會把它畫成日用量圖；這是官方帳號快照，不是 App 長期蒐集出的序列。額度與 Token 統計各自保存取得時間，並依各自頻率更新；其中一邊失敗不會清掉另一邊的可信結果。圖表預設顯示最近 30 天，可在設定改為 5／10／15／20／30／60 天；這只改變畫面範圍，不會刪除 snapshot 內的官方資料。面板也會顯示今天的官方 bucket；若上游尚未回報今天，明示「尚未回報」，不把缺值當成 0。設定另有一份隱私安全的錯誤紀錄，保存時間、供應商、App 定義的錯誤類型與封閉詳細原因；每筆可展開查看並複製完整說明。原始回應與 provider 任意文字仍不保存。紀錄預設保留 5 天，可改為 3／7 天或隨時清除。
 
@@ -108,7 +108,7 @@ shasum -a 256 -c Agent-Usage-Bar-<版本>-alpha.1-b<build>-<架構>.dmg.sha256
 
 `.sha256` 只能證明 DMG 位元組與你取得的 checksum 相同；它必須來自可信或獨立的發布管道才有意義，也不能取代 Developer ID 與 Apple 公證所提供的發布者身分。
 
-需求：macOS 14 以上、Apple Silicon，以及本機已登入的 Claude Code／Codex CLI（依啟用的 provider 而定）。
+需求：macOS 14 以上、Apple Silicon，以及本機已登入的 Claude Code／Codex CLI／Antigravity CLI（`agy`）（依啟用的 provider 而定）。
 
 ## 資料怎麼來的
 
@@ -184,6 +184,18 @@ App Server 是單一長駐子程序，不會每次更新就重開。停用 Codex
 
 GUI App 的 `PATH` 常與終端機不同，因此設定 → 資料來源可指定 Codex 執行檔；留空時依序檢查常見安裝位置與目前環境。App 只驗證路徑可執行，不驗證供應商簽章；請只選擇你信任的 Codex 安裝。查詢不觸發模型推理，也不消耗一般 Codex 對話額度。
 
+### Antigravity
+
+執行官方 Antigravity CLI（`agy`）的固定唯讀指令，直接讀取結構化 JSON 額度報告：
+
+```bash
+agy -p /usage --output-format json --print-timeout 15s
+```
+
+實測在空白私人暫存目錄下執行時 `status="SUCCESS"`、`conversation_id=""`、`num_turns=0`、所有 token 計數為 0，不觸發模型推理、不消耗額度、也不留下對話紀錄；CLI 日誌透過 `--log-file` 導向該次查詢的暫存目錄並在退出後一併移除。App 不讀取憑證、不修改 `~/.gemini/antigravity-cli/` 設定，也不掃描本機 `language_server` 程序。
+
+Antigravity 依模型群組分池（例如 `Gemini Models`、`Claude and GPT models`、`Gemini 4 Argon`）：選單列預設追蹤 `Gemini Models`，設定頁可獨立切換為其他群組或「最高用量群組」，也能與詳情面板分開選擇顯示「5 小時與 7 天」、「僅 5 小時」或「僅 7 天」；當方案或群組沒有 5 小時額度（如 Free 方案）時，選單列自動收斂為單槽 7 天量表。詳情面板預設顯示所有模型群組，並支援個別列收合記憶。完整欄位、換算邊界與未驗證項目見 [Antigravity 的額度資料來源](docs/ANTIGRAVITY_USAGE.md)。
+
 ## 開發
 
 ```bash
@@ -236,6 +248,7 @@ Xcode target 用同步資料夾（synchronized folder）引用 `Sources/AgentUsa
 - [UI spec](docs/UI_SPEC.md) —— 量表視覺語言（兩個 provider 必須一致的部分）
 - [Claude 的額度資料來源](docs/CLAUDE_USAGE.md) —— 固定的唯讀指令、文字格式與容錯策略
 - [Codex 的額度資料來源](docs/CODEX_USAGE.md) —— App Server 協定、欄位與容錯策略
+- [Antigravity 的額度資料來源](docs/ANTIGRAVITY_USAGE.md) —— 固定的 `agy` 唯讀指令、多群組映射與 Free 方案處理
 - [已退場的鑰匙圈路徑](docs/LEGACY_KEYCHAIN_PATH.md) —— 舊的憑證＋端點做法、當初踩出來的知識、什麼情況值得走回去
 - [做過但行不通的事](docs/WHAT_DID_NOT_WORK.md) —— 推翻過的決定與踩過的坑
 - [Verification](docs/VERIFICATION.md) —— 驗證跑哪些檢查，以及那些護欄的由來
