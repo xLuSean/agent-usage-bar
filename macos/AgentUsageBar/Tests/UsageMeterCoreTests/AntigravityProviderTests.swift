@@ -194,6 +194,48 @@ struct AntigravityProviderTests {
         #expect(argonWeekly?.used.usedPercent == 0)
     }
 
+    @Test func missingSelectedGroupFallsBackPredictably() throws {
+        let multi = try AntigravityUsageDecoder.decode(Self.sampleMultiGroupPayload(), now: Self.now)
+        let missing = AntigravityToolbarGroupSelection.group("Retired Pool")
+        #expect(multi.resolvedAntigravityToolbarGroup(selection: missing) == "Gemini Models")
+        #expect(multi.quotaWindow(for: .session, antigravityGroup: missing)?.modelDisplayName == "Gemini Models")
+        #expect(multi.quotaWindow(for: .weeklyAll, antigravityGroup: missing)?.modelDisplayName == "Gemini Models")
+
+        let noDefaultPayload = Self.makePayload(groups: [
+            [
+                "name": "Alpha Pool",
+                "buckets": [
+                    ["window": "5h", "remaining_fraction": 0.50, "reset_time": Self.futureISO(3_600)],
+                    ["window": "weekly", "remaining_fraction": 0.70, "reset_time": Self.futureISO(3_600 * 72)],
+                ],
+            ],
+            [
+                "name": "Beta Pool",
+                "buckets": [
+                    ["window": "weekly", "remaining_fraction": 0.25, "reset_time": Self.futureISO(3_600 * 72)],
+                ],
+            ],
+        ])
+        let noDefault = try AntigravityUsageDecoder.decode(noDefaultPayload, now: Self.now)
+        #expect(noDefault.resolvedAntigravityToolbarGroup(selection: missing) == "Alpha Pool")
+        #expect(noDefault.quotaWindow(for: .session, antigravityGroup: missing)?.used.usedPercent == 50)
+        #expect(noDefault.quotaWindow(for: .weeklyAll, antigravityGroup: missing)?.used.usedPercent == 30)
+
+        // A present weekly-only group must stay on that group and never borrow another group's 5h meter.
+        let betaSelection = AntigravityToolbarGroupSelection.group("Beta Pool")
+        #expect(noDefault.resolvedAntigravityToolbarGroup(selection: betaSelection) == "Beta Pool")
+        #expect(noDefault.quotaWindow(for: .session, antigravityGroup: betaSelection) == nil)
+        #expect(noDefault.quotaWindow(for: .weeklyAll, antigravityGroup: betaSelection)?.used.usedPercent == 75)
+        #expect(
+            GaugeStyleResolver.effectiveDisplayedWindows(
+                provider: .antigravity,
+                state: .current(noDefault),
+                requested: .both,
+                antigravityToolbarGroup: betaSelection
+            ) == .weeklyOnly
+        )
+    }
+
     @Test func tinyPositiveRemainingFractionNeverRoundsToExhausted() {
         #expect(AntigravityUsageDecoder.usedPercent(fromRemainingFraction: 0.0).usedPercent == 100)
         #expect(AntigravityUsageDecoder.usedPercent(fromRemainingFraction: 0.002).usedPercent == 99)

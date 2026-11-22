@@ -135,7 +135,7 @@ Snapshot 不再保存無人讀取的 schema key 名稱或已退役 HTTP rate-lim
 
 `AppModel` 與 `ProviderPresenter` 是 `@MainActor`。Provider 是 `Sendable` struct，`fetch()` 在非隔離的 async 環境執行。Claude 每次查詢由 `ClaudeProcessRunner` 啟動短命程序；`CodexAppServerClient` 是 actor，序列化 request ID、stdin 寫入、JSONL buffer、路徑切換與 process 結束。`FileHandle` 的同步 stdout callback 先經 lock-protected `CodexOutputIngress`：同一 generation 最多一個消費者，片段依 callback 順序合併，排隊 bytes 超過 4 MB 就 fail closed。這道前置上限不可由 actor 內的 JSONL buffer 取代，因為後者看不到尚在 executor 前等待的資料。
 
-兩種子程序都不得繼承 GUI App 的目前目錄。LaunchServices 啟動的 App 通常以 `/` 為 cwd；CLI 若把它當成專案初始化，可能檢查根目錄下的自動掛載點並觸發與額度查詢無關的 macOS「檔案與檔案夾」權限。每次啟動前，`ProviderProcessWorkingDirectory` 會在目前使用者的 macOS 暫存區建立新的 provider-specific 空白目錄，確認它位於本機 volume、不是 symlink、權限為 `0700`，再同時設定 `Process.currentDirectoryURL` 與 `PWD`。任何檢查失敗都讓該次查詢 fail closed，絕不退回 `/`、home 或目前專案。
+兩種子程序都不得繼承 GUI App 的目前目錄。LaunchServices 啟動的 App 通常以 `/` 為 cwd；CLI 若把它當成專案初始化，可能檢查根目錄下的自動掛載點並觸發與額度查詢無關的 macOS「檔案與檔案夾」權限。每次啟動前，`ProviderProcessWorkingDirectory` 會在目前使用者的 macOS 暫存區建立新的 provider-specific 空白目錄，確認它位於本機 volume、不是 symlink、權限為 `0700`，再同時設定 `Process.currentDirectoryURL` 與 `PWD`。任何檢查失敗都讓該次查詢 fail closed，絕不退回 `/`、home 或目前專案。Antigravity 是例外：`agy` 會依工作目錄路徑留下狀態檔，所以它用 `createReusable(named:)` 取得同一個固定名稱的目錄，每次清空重建，路徑上若是 symlink 只移除連結本身；查詢期間持有同一資料夾內的 `flock`（`O_CLOEXEC`，避免 `agy` 留下的子孫程序繼承），拿不到時短暫重試後以可重試的失敗結束。
 
 App 本身也有單一執行個體邊界。`AppInstanceCoordinator` 在使用者專屬的 macOS 暫存區開啟固定 lock file，確認它是目前使用者擁有的普通檔案，再以核心的 non-blocking exclusive lock 原子選出唯一 owner。後開副本拿不到鎖時，只要求既有 App 顯示設定並在建立 provider 前退出；不得依 PID 大小猜啟動先後，也不得終止 peer。檔案可以留在暫存區，但鎖跟著開啟的 file descriptor；owner 正常退出或 crash 時，核心都會自動釋放，不會形成永久卡死。
 

@@ -554,6 +554,33 @@ private struct ProviderSettingsRow: View {
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                if let snapshot = presenter.state.snapshot, !snapshot.antigravityGroupNames.isEmpty {
+                    if case .group(let selected) = model.antigravityToolbarGroup,
+                       !snapshot.antigravityGroupNames.contains(selected),
+                       let resolved = snapshot.resolvedAntigravityToolbarGroup(selection: model.antigravityToolbarGroup) {
+                        Label(
+                            model.displayLanguage.text(
+                                chinese: "最新回應中未包含「\(selected)」，選單列目前改顯示「\(resolved)」。",
+                                english: "\"\(selected)\" is not in the latest response; the menu bar is currently showing \"\(resolved)\"."
+                            ),
+                            systemImage: "info.circle"
+                        )
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    if case .group(let selected) = model.antigravityPopoverGroup,
+                       !snapshot.antigravityGroupNames.contains(selected) {
+                        Label(
+                            model.displayLanguage.text(
+                                chinese: "最新回應中未包含「\(selected)」，詳情面板目前改顯示所有群組。",
+                                english: "\"\(selected)\" is not in the latest response; the popover is currently showing all groups."
+                            ),
+                            systemImage: "info.circle"
+                        )
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             if let explanation = placement?.explanation(language: model.displayLanguage) {
@@ -765,13 +792,13 @@ private struct AntigravityExecutableSettings: View {
                     .foregroundStyle(.orange)
             }
             LabeledContent(model.displayLanguage.text(chinese: "執行指令", english: "Command Run")) {
-                Text(verbatim: "agy " + AntigravityUsageCommand.arguments.joined(separator: " "))
+                Text(verbatim: "agy " + AntigravityUsageCommand.arguments.joined(separator: " ") + " --log-file <temp>/agy.log")
                     .font(.caption2.monospaced())
                     .textSelection(.enabled)
             }
             Text(verbatim: model.displayLanguage.text(
-                chinese: "App 以固定參數直接執行此檔案，不經 shell，也不會啟動登入流程或消耗模型額度。CLI 日誌會導向每次查詢專屬的空白暫存目錄，結束後即刪除。",
-                english: "The app executes this file directly with those fixed arguments. It does not use a shell, never starts a sign-in flow, and runs zero model turns. CLI logs are redirected to a per-query temporary directory that is removed after exit."
+                chinese: "App 以固定參數直接執行此檔案，不經 shell，也不會啟動登入流程或消耗模型額度。CLI 日誌會導向 App 專用的固定暫存目錄，每次查詢前清空、結束後刪除；查詢時也會關閉 agy 自己的背景自動更新。",
+                english: "The app executes this file directly with those fixed arguments. It does not use a shell, never starts a sign-in flow, and runs zero model turns. CLI logs go to one fixed temporary directory owned by the app, cleared before each query and removed afterward. Queries also turn off agy's own background auto-update."
             ))
                 .font(.caption2)
                 .foregroundStyle(.secondary)

@@ -273,6 +273,7 @@ public enum UsageError: Error, Sendable, Hashable {
             "Antigravity /usage bucket reset_time is invalid": "Antigravity /usage 額度的 reset_time 無效",
             "Antigravity /usage contains duplicate quota buckets": "Antigravity /usage 包含重複的額度項目",
             "Antigravity CLI path changed; waiting to reconnect": "Antigravity CLI 路徑已變更，等待重新連線",
+            "Another Antigravity usage query is still running": "另一個 Antigravity 額度查詢仍在執行",
         ]
         if let translated = exact[detail] { return translated }
 

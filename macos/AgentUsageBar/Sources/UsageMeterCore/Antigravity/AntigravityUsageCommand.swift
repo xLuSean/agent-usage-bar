@@ -28,6 +28,20 @@ public enum AntigravityUsageCommand {
     public static let maxOutputBytes = 512 * 1024
 
     static let maxStandardErrorBytes = 4 * 1024
+
+    /// The one working directory every query reuses, cleared and recreated each time.
+    /// `agy` keeps a small state file per working-directory path that it never removes;
+    /// a fresh path per query left one more of them every refresh. See
+    /// `ProviderProcessWorkingDirectory.createReusable(named:baseDirectory:)`.
+    static let workspaceName = "antigravity-workspace"
+
+    /// Stops the query from starting `agy`'s background self-update. Without it, `agy`
+    /// checks for an update whenever 15 minutes have passed since the last check and
+    /// spawns a background updater, so this app's polling would be what updates the
+    /// user's CLI. Undocumented: found in `agy` 1.5.14 and confirmed by its log line
+    /// "Auto-update disabled via environment variable". `1` is ignored; it must be `true`.
+    static let disableAutoUpdateVariable = "AGY_CLI_DISABLE_AUTO_UPDATE"
+    static let disableAutoUpdateValue = "true"
 }
 
 /// Output of one finished `agy` invocation. Deliberately not `Codable`.
@@ -52,13 +66,26 @@ public protocol AntigravityCommandRunning: Sendable {
 /// The live runner. This is the only file in `Antigravity/` allowed to construct a `Process`.
 public struct AntigravityProcessRunner: AntigravityCommandRunning {
     private let beforeAdoptingProcess: @Sendable () -> Void
+    private let workspaceBaseDirectory: URL
+    private let workspaceLockAttempts: Int
+    private let workspaceLockRetryDelay: Duration
 
     public init() {
-        beforeAdoptingProcess = {}
+        self.init(beforeAdoptingProcess: {})
     }
 
-    init(beforeAdoptingProcess: @escaping @Sendable () -> Void) {
+    /// Test seams: tests pass their own base directory so they never touch the fixed
+    /// workspace a running copy of the app may be using.
+    init(
+        beforeAdoptingProcess: @escaping @Sendable () -> Void = {},
+        workspaceBaseDirectory: URL = FileManager.default.temporaryDirectory,
+        workspaceLockAttempts: Int = 15,
+        workspaceLockRetryDelay: Duration = .milliseconds(200)
+    ) {
         self.beforeAdoptingProcess = beforeAdoptingProcess
+        self.workspaceBaseDirectory = workspaceBaseDirectory
+        self.workspaceLockAttempts = max(1, workspaceLockAttempts)
+        self.workspaceLockRetryDelay = workspaceLockRetryDelay
     }
 
     public func run(
@@ -66,14 +93,10 @@ public struct AntigravityProcessRunner: AntigravityCommandRunning {
         arguments: [String],
         timeout: TimeInterval
     ) async throws -> AntigravityCommandOutput {
-        let workingDirectory: ProviderProcessWorkingDirectory
-        do {
-            workingDirectory = try ProviderProcessWorkingDirectory.create(for: .antigravity)
-        } catch {
-            throw UsageError.antigravityCommandFailed(
-                "Could not create an isolated local working directory."
-            )
-        }
+        let (workspaceLock, workingDirectory) = try await acquireWorkspace()
+        // Reverse order of declaration: the directory goes first, then the lock that
+        // keeps another run from clearing it.
+        defer { workspaceLock.release() }
         defer { workingDirectory.remove() }
 
         let handle = AntigravityProcessHandle(terminationGrace: AntigravityUsageCommand.terminationGrace)
@@ -95,6 +118,52 @@ public struct AntigravityProcessRunner: AntigravityCommandRunning {
         } onCancel: {
             handle.requestStop(.cancelled)
         }
+    }
+
+    /// Takes the cross-process lock, then clears and recreates the fixed workspace.
+    ///
+    /// A presenter never overlaps its own queries, but another copy of the app (for
+    /// example the verification bundle, which has its own bundle identifier) shares the
+    /// same temporary root. A held lock is retried briefly and then reported as a normal,
+    /// retryable query failure; nothing ever waits on it without a bound.
+    private func acquireWorkspace() async throws -> (AntigravityWorkspaceLock, ProviderProcessWorkingDirectory) {
+        let setupFailure = UsageError.antigravityCommandFailed(
+            "Could not create an isolated local working directory."
+        )
+        let lockURL: URL
+        do {
+            lockURL = try ProviderProcessWorkingDirectory
+                .preparedPrivateRoot(baseDirectory: workspaceBaseDirectory)
+                .root
+                .appendingPathComponent("\(AntigravityUsageCommand.workspaceName).lock", isDirectory: false)
+        } catch {
+            throw setupFailure
+        }
+
+        for attempt in 1...workspaceLockAttempts {
+            let lock: AntigravityWorkspaceLock?
+            do {
+                lock = try AntigravityWorkspaceLock.acquire(at: lockURL)
+            } catch {
+                throw setupFailure
+            }
+            if let lock {
+                do {
+                    let directory = try ProviderProcessWorkingDirectory.createReusable(
+                        named: AntigravityUsageCommand.workspaceName,
+                        baseDirectory: workspaceBaseDirectory
+                    )
+                    return (lock, directory)
+                } catch {
+                    lock.release()
+                    throw setupFailure
+                }
+            }
+            if attempt < workspaceLockAttempts {
+                try await Task.sleep(for: workspaceLockRetryDelay)
+            }
+        }
+        throw UsageError.antigravityCommandFailed("Another Antigravity usage query is still running")
     }
 
     private static func launchAndWait(
@@ -192,8 +261,68 @@ public struct AntigravityProcessRunner: AntigravityCommandRunning {
         var environment = base
         environment["LANG"] = "en_US.UTF-8"
         environment["LC_ALL"] = "en_US.UTF-8"
+        environment[AntigravityUsageCommand.disableAutoUpdateVariable] = AntigravityUsageCommand.disableAutoUpdateValue
         guard let workingDirectory else { return environment }
         return workingDirectory.environment(basedOn: environment)
+    }
+}
+
+/// An exclusive `flock` on a file inside the app's private temporary root, held for one
+/// whole query so two runs never clear the same fixed workspace.
+///
+/// Opened with `O_CLOEXEC`: `agy` can start the user's MCP servers and leave them running
+/// after it exits, and a descendant that inherited this descriptor would hold the lock
+/// for as long as it lived.
+final class AntigravityWorkspaceLock: @unchecked Sendable {
+    private let descriptor: Int32
+    private let released = OSAllocatedUnfairLock(initialState: false)
+
+    private init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    /// Returns `nil` when another holder has the lock; throws when the lock file itself
+    /// cannot be opened safely.
+    static func acquire(at url: URL) throws -> AntigravityWorkspaceLock? {
+        let descriptor = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW, S_IRUSR | S_IWUSR)
+        guard descriptor >= 0 else { throw POSIXError(.EACCES) }
+
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0,
+              metadata.st_uid == geteuid(),
+              metadata.st_mode & S_IFMT == S_IFREG else {
+            close(descriptor)
+            throw POSIXError(.EACCES)
+        }
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let failure = errno
+            close(descriptor)
+            if failure == EWOULDBLOCK { return nil }
+            throw POSIXError(POSIXErrorCode(rawValue: failure) ?? .EIO)
+        }
+        return AntigravityWorkspaceLock(descriptor: descriptor)
+    }
+
+    /// For tests. Foundation's `Process` does not pass this descriptor on today either,
+    /// so only this check catches the flag being dropped.
+    var closesOnExec: Bool {
+        released.withLock { released in
+            !released && (fcntl(descriptor, F_GETFD) & FD_CLOEXEC) != 0
+        }
+    }
+
+    func release() {
+        let shouldClose = released.withLock { released in
+            defer { released = true }
+            return !released
+        }
+        guard shouldClose else { return }
+        _ = flock(descriptor, LOCK_UN)
+        close(descriptor)
+    }
+
+    deinit {
+        release()
     }
 }
 

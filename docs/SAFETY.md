@@ -13,13 +13,17 @@ App 不做的事，這是硬性清單：
 - 不購買 credits、不啟用自動加值、不修改 spend 設定；不呼叫 `account/rateLimitResetCredit/consume` 或 `account/sendAddCreditsNudgeEmail`。
 - 查詢失敗時**不改用**讀取 JSONL、SQLite、transcript 或其他本機檔案的替代方案。
 - 設定中的錯誤紀錄保存時間、供應商、封閉錯誤類型與封閉詳細原因。Codex 查詢可額外保存方法、AUB 為背景程序產生的隨機識別碼、啟動時間及沿用狀態、數字錯誤碼與同一查詢的恢復資訊。詳細原因是 App 把已知錯誤形狀縮減成固定代碼後再產生的說明；未知的 `UsageError` 自由文字只記成「無法辨識」，不得原樣保存。每筆可展開並複製同一份隱私安全說明；原始回應、JSON key、RPC message、stdout／stderr、執行檔路徑與 provider metadata 都不保存或複製。預設 5 天，可選 3／7 天、隨時清除，最多 200 筆。寫入時優先保留最新紀錄，使總量維持在 64 KiB 內。讀取時若已有超限資料，仍在 JSON 解碼前拒絕並清除。
-- Claude 與 Codex 子程序不得從 `/`、home、App 安裝位置或使用者專案執行。每個 process instance 只使用 App 在目前使用者本機暫存區建立的空白 `0700` 目錄；建立或驗證失敗時查詢直接失敗，不得 fallback。
+- Claude、Codex 與 Antigravity 子程序不得從 `/`、home、App 安裝位置或使用者專案執行。Claude 與 Codex 的每個 process instance 只使用 App 在目前使用者本機暫存區新建的空白 `0700` 目錄；Antigravity 改用同一處一個固定名稱的 `0700` 目錄，每次查詢前清空重建、結束後移除，並以檔案鎖確保同一時間只有一個查詢使用它（原因見下方）。建立或驗證失敗時查詢直接失敗，不得 fallback。
 
 兩邊的指令與 arguments 都固定在程式中，沒有任何介面可以提供任意指令、參數或 URL。允許清單就是型別本身（`ClaudeUsageCommand`、`CodexJSONRPCMethod`）。
 
 工作目錄隔離不改 `HOME` 或 provider-specific home。官方 CLI 仍能使用自己管理的登入狀態；App 只讓實際 cwd 與 `PWD` 指向同一個空白本機目錄。這避免 CLI 初始化時把 LaunchServices 常見的 `/` cwd 當成專案，進而碰到根目錄下的網路 volume、自動掛載點或其他受保護資料夾。
 
 Claude 子程序另外把 Claude Code 自己的暫存根目錄（`CLAUDE_CODE_TMPDIR`）指向同一個目錄。Claude Code 會替每次執行留下一個以工作目錄命名的暫存資料夾；留在它預設的 `/tmp/claude-<uid>/` 就是每次查詢多一個，而那個位置不屬於本 App，本 App 不去清理。導向查詢目錄後，這些資料夾隨目錄一起移除。`TMPDIR` 不變，App 也仍然不讀取、不刪除 Claude Code 在其他位置的任何檔案。
+
+Antigravity 的 `agy` 沒有同類的暫存根目錄設定，而是依工作目錄的路徑，在 `~/.gemini/antigravity-cli/implicit/` 留下一個小狀態檔。2026-11-22 以 `agy` 1.5.14 實測：每換一個新路徑就多一個，同一路徑重複執行不再新增。那個位置不屬於本 App，本 App 不去清理，所以改為固定工作目錄的路徑，讓它最多只有一個。查詢時另外帶 `AGY_CLI_DISABLE_AUTO_UPDATE=true`，否則 `agy` 每隔 15 分鐘會在背景啟動自我更新，等於由本 App 的輪詢去更新使用者的 CLI。這兩個行為都不在官方文件裡；日後 `agy` 改版若不再適用，留檔或背景更新會在沒有錯誤訊息的情況下重新出現。
+
+**已知限制：`agy` 會啟動使用者自己設定的 MCP 伺服器。** `agy` 沒有類似 Claude Code `--safe-mode` 的開關；實測在 MCP 設定裡放一個只會等待的假伺服器，執行 `/usage` 時它就被啟動，而且在 `agy` 結束後仍繼續執行（沒有佔住本 App 讀取的輸出管道，所以不會拖慢查詢）。本 App 不改寫使用者的 `agy` 設定，因此沒有隔離這一點。
 
 ### 1.1 Codex App Server 邊界
 

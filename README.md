@@ -192,7 +192,7 @@ GUI App 的 `PATH` 常與終端機不同，因此設定 → 資料來源可指�
 agy -p /usage --output-format json --print-timeout 15s
 ```
 
-實測在空白私人暫存目錄下執行時 `status="SUCCESS"`、`conversation_id=""`、`num_turns=0`、所有 token 計數為 0，不觸發模型推理、不消耗額度、也不留下對話紀錄；CLI 日誌透過 `--log-file` 導向該次查詢的暫存目錄並在退出後一併移除。App 不讀取憑證、不修改 `~/.gemini/antigravity-cli/` 設定，也不掃描本機 `language_server` 程序。
+實測在空白私人暫存目錄下執行時 `status="SUCCESS"`、`conversation_id=""`、`num_turns=0`、所有 token 計數為 0，不觸發模型推理、不消耗額度、也不留下對話紀錄；CLI 日誌透過 `--log-file` 導向 App 暫存區裡一個固定路徑的工作目錄，每次查詢前清空、結束後移除；路徑固定是因為 `agy` 會依工作目錄路徑留下狀態檔，換新路徑就多一個。查詢時另外關閉 `agy` 自己的背景自動更新。App 不讀取憑證、不修改 `~/.gemini/antigravity-cli/` 設定，也不掃描本機 `language_server` 程序；但 `agy` 本身會啟動使用者在 `agy` 裡設定的 MCP 伺服器，App 沒有隔離這一點。
 
 Antigravity 依模型群組分池（例如 `Gemini Models`、`Claude and GPT models`、`Gemini 4 Argon`）：選單列預設追蹤 `Gemini Models`，設定頁可獨立切換為其他群組或「最高用量群組」，也能與詳情面板分開選擇顯示「5 小時與 7 天」、「僅 5 小時」或「僅 7 天」；當方案或群組沒有 5 小時額度（如 Free 方案）時，選單列自動收斂為單槽 7 天量表。詳情面板預設顯示所有模型群組，並支援個別列收合記憶。完整欄位、換算邊界與未驗證項目見 [Antigravity 的額度資料來源](docs/ANTIGRAVITY_USAGE.md)。
 
