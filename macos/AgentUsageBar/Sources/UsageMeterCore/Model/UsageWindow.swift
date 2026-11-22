@@ -21,6 +21,7 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         }
 
         case session
+        case sessionScoped
         case weeklyAll
         case weeklyScoped
         /// A `kind` this build has never seen. Displayed, not discarded.
@@ -29,6 +30,7 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         public init(rawValue: String) {
             switch rawValue {
             case "session": self = .session
+            case "session_scoped": self = .sessionScoped
             case "weekly_all": self = .weeklyAll
             case "weekly_scoped": self = .weeklyScoped
             default: self = .unrecognized(rawValue)
@@ -38,6 +40,7 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         public var rawValue: String {
             switch self {
             case .session: "session"
+            case .sessionScoped: "session_scoped"
             case .weeklyAll: "weekly_all"
             case .weeklyScoped: "weekly_scoped"
             case .unrecognized(let raw): raw
@@ -139,8 +142,13 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
             } else {
                 duration = isChinese ? "\(durationMinutes) 分鐘" : "\(durationMinutes) minutes"
             }
-            if case .weeklyScoped = kind, let modelDisplayName {
-                return "\(duration) · \(modelDisplayName)"
+            switch kind {
+            case .sessionScoped, .weeklyScoped:
+                if let modelDisplayName {
+                    return "\(duration) · \(modelDisplayName)"
+                }
+            default:
+                break
             }
             return duration
         }
@@ -153,16 +161,18 @@ public struct UsageWindow: Sendable, Hashable, Identifiable, Codable {
         if isChinese {
             return switch kind {
             case .session: "5 小時"
+            case .sessionScoped: modelDisplayName.map { "5 小時 · \($0)" } ?? "5 小時 · 依模型"
             case .weeklyAll: "7 天"
             case .weeklyScoped: modelDisplayName.map { "7 天 · \($0)" } ?? "7 天 · 依模型"
-            case .unrecognized(let raw): raw
+            case .unrecognized(let raw): modelDisplayName.map { "\(raw) · \($0)" } ?? raw
             }
         }
         return switch kind {
         case .session: "5 hours"
+        case .sessionScoped: modelDisplayName.map { "5 hours · \($0)" } ?? "5 hours · per model"
         case .weeklyAll: "7 days"
         case .weeklyScoped: modelDisplayName.map { "7 days · \($0)" } ?? "7 days · per model"
-        case .unrecognized(let raw): raw
+        case .unrecognized(let raw): modelDisplayName.map { "\(raw) · \($0)" } ?? raw
         }
     }
 }

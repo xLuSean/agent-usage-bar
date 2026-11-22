@@ -32,9 +32,18 @@ production_settings_fingerprint() {
       v1.provider.claude.enabled \
       v1.provider.claude.identityColor \
       v1.provider.claude.refreshInterval \
+      v1.provider.claude.toolbarWindows \
+      v1.provider.claude.popoverWindows \
       v1.provider.codex.enabled \
       v1.provider.codex.identityColor \
       v1.provider.codex.refreshInterval \
+      v1.provider.codex.toolbarWindows \
+      v1.provider.codex.popoverWindows \
+      v1.provider.antigravity.enabled \
+      v1.provider.antigravity.identityColor \
+      v1.provider.antigravity.refreshInterval \
+      v1.provider.antigravity.toolbarWindows \
+      v1.provider.antigravity.popoverWindows \
       v1.codexTokenHistoryDays \
       v1.codexTokenRefreshInterval \
       v1.menuBarLayout \
@@ -42,6 +51,9 @@ production_settings_fingerprint() {
       v1.displayLanguage \
       v1.claudeExecutablePath \
       v1.codexExecutablePath \
+      v1.antigravityExecutablePath \
+      v1.antigravityToolbarGroup \
+      v1.antigravityPopoverGroup \
       v1.diagnosticRetentionDays \
       v1.diagnosticLog
     do
@@ -671,7 +683,8 @@ echo "==> guard: UsageProvider stays fetch-only"
 dead_provider_contract="$(grep -n -E 'provider: ProviderKind|backoffPolicy' \
   macos/AgentUsageBar/Sources/UsageMeterCore/Provider/UsageProvider.swift \
   macos/AgentUsageBar/Sources/UsageMeterCore/Claude/ClaudeUsageProvider.swift \
-  macos/AgentUsageBar/Sources/UsageMeterCore/Codex/CodexUsageProvider.swift || true)"
+  macos/AgentUsageBar/Sources/UsageMeterCore/Codex/CodexUsageProvider.swift \
+  macos/AgentUsageBar/Sources/UsageMeterCore/Antigravity/AntigravityUsageProvider.swift || true)"
 if [ -n "$dead_provider_contract" ]; then
   echo "FAIL: UsageProvider or a live provider duplicates presenter-owned metadata:" >&2
   echo "$dead_provider_contract" >&2
@@ -776,6 +789,46 @@ if [ "$actual_arguments" != "$expected_arguments" ]; then
   exit 1
 fi
 echo "ok: one fixed, read-only, shell-free Claude command"
+
+echo "==> guard: the Antigravity provider runs one fixed read-only command"
+antigravity_processes="$(grep -rn --include='*.swift' -E 'Process\(\)' \
+  macos/AgentUsageBar/Sources/UsageMeterCore/Antigravity \
+  | grep -v 'AntigravityUsageCommand.swift' || true)"
+if [ -n "$antigravity_processes" ]; then
+  echo "FAIL: only AntigravityUsageCommand.swift may start a subprocess:" >&2
+  echo "$antigravity_processes" >&2
+  exit 1
+fi
+
+antigravity_forbidden="$(grep -rn --include='*.swift' -E \
+  '"(login|logout|mcp|plugin|plugins|update|install|remote-control|mic-serve|--continue|--conversation|--dangerously-skip-permissions)"' \
+  macos/AgentUsageBar/Sources/UsageMeterCore/Antigravity || true)"
+if [ -n "$antigravity_forbidden" ]; then
+  echo "FAIL: a non-read-only Antigravity subcommand appears in the provider:" >&2
+  echo "$antigravity_forbidden" >&2
+  exit 1
+fi
+
+antigravity_shell="$(grep -rn --include='*.swift' -E '/bin/(ba)?sh|/bin/zsh|"-c"' \
+  macos/AgentUsageBar/Sources/UsageMeterCore/Antigravity || true)"
+if [ -n "$antigravity_shell" ]; then
+  echo "FAIL: the Antigravity provider must execute the binary directly, never via a shell:" >&2
+  echo "$antigravity_shell" >&2
+  exit 1
+fi
+
+expected_antigravity_arguments='"-p","/usage","--output-format","json","--print-timeout","15s",'
+actual_antigravity_arguments="$(sed -n '/public static let arguments = \[/,/^    \]/p' \
+  macos/AgentUsageBar/Sources/UsageMeterCore/Antigravity/AntigravityUsageCommand.swift \
+  | tr -d ' \t\n' \
+  | sed 's/^publicstaticletarguments=\[//; s/\]$//')"
+if [ "$actual_antigravity_arguments" != "$expected_antigravity_arguments" ]; then
+  echo "FAIL: the approved Antigravity /usage argument list has changed:" >&2
+  echo "  expected: $expected_antigravity_arguments" >&2
+  echo "  actual:   $actual_antigravity_arguments" >&2
+  exit 1
+fi
+echo "ok: one fixed, read-only, shell-free Antigravity command"
 
 echo "==> guard: process fixtures never signal a PID read from a file"
 # Shipping lifecycle code retains the exact Process instance it launched. Test cleanup

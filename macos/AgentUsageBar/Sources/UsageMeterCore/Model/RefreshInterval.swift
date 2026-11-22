@@ -26,6 +26,7 @@ public enum RefreshInterval: Int, CaseIterable, Identifiable, Sendable {
         switch provider {
         case .claude: .tenMinutes
         case .codex: .tenMinutes
+        case .antigravity: .tenMinutes
         }
     }
 

@@ -149,7 +149,7 @@ private struct DiagnosticsSettingsTab: View {
                                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                                         Text(verbatim: entry.provider.displayName)
                                             .font(.callout.weight(.semibold))
-                                            .frame(width: 58, alignment: .leading)
+                                            .frame(width: 82, alignment: .leading)
                                         Text(verbatim: entry.kind.displayName(locale: model.displayLanguage.locale))
                                             .font(.callout)
                                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -248,8 +248,8 @@ private struct ProvidersSettingsTab: View {
                 }
                 if model.menuBarLayout == .combined {
                     Text(model.displayLanguage.text(
-                        chinese: "兩家共用一個選單列項目，減少系統留白。每家保留字母與外框顏色；同一外框內左側是 5 小時，右側是 7 天。",
-                        english: "Combines both providers in one status item to reduce system padding. Each keeps its letter and outline color, with 5 hours on the left and 7 days on the right inside one frame."
+                        chinese: "所有啟用中的供應商共用一個選單列項目，減少系統留白。每家保留字母與外框顏色；顯示雙時間窗時左側是 5 小時，右側是 7 天。",
+                        english: "Combines all enabled providers in one status item to reduce system padding. Each keeps its letter and outline color, with 5 hours on the left and 7 days on the right when showing both windows."
                     ))
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -271,7 +271,10 @@ private struct ProvidersSettingsTab: View {
             if model.allProvidersDisabled {
                 Section {
                     Label(
-                        "When both providers are disabled, a neutral menu bar icon remains as an entry point so you can reopen Settings.",
+                        model.displayLanguage.text(
+                            chinese: "所有供應商皆已停用時，選單列仍會保留一個中性圖示作為入口，方便隨時重新開啟設定。",
+                            english: "When all providers are disabled, a neutral menu bar icon remains as an entry point so you can reopen Settings."
+                        ),
                         systemImage: "info.circle"
                     )
                     .font(.caption)
@@ -289,6 +292,23 @@ private struct ProviderSettingsRow: View {
     private var placement: StatusBarController.MenuBarPlacement? {
         guard presenter.settings.isEnabled else { return nil }
         return model.menuBarPlacement?(presenter.provider)
+    }
+
+    private var availableAntigravityGroups: [String] {
+        var groups: [String] = []
+        if let snapshotGroups = presenter.state.snapshot?.antigravityGroupNames, !snapshotGroups.isEmpty {
+            groups.append(contentsOf: snapshotGroups)
+        }
+        if !groups.contains(AntigravityToolbarGroupSelection.defaultGroupName) {
+            groups.insert(AntigravityToolbarGroupSelection.defaultGroupName, at: 0)
+        }
+        if case .group(let selected) = model.antigravityToolbarGroup, !groups.contains(selected) {
+            groups.append(selected)
+        }
+        if case .group(let selected) = model.antigravityPopoverGroup, !groups.contains(selected) {
+            groups.append(selected)
+        }
+        return groups
     }
 
     var body: some View {
@@ -319,6 +339,94 @@ private struct ProviderSettingsRow: View {
                     .controlSize(.small)
                     .fixedSize()
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                GridRow(alignment: .firstTextBaseline) {
+                    Text(verbatim: model.displayLanguage.text(
+                        chinese: "選單列時間窗",
+                        english: "Menu Bar Windows"
+                    ))
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: $presenter.settings.toolbarWindows) {
+                        ForEach(QuotaWindowDisplayMode.allCases) { mode in
+                            Text(verbatim: mode.displayName(locale: model.displayLanguage.locale)).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                GridRow(alignment: .firstTextBaseline) {
+                    Text(verbatim: model.displayLanguage.text(
+                        chinese: "詳情面板時間窗",
+                        english: "Popover Windows"
+                    ))
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: $presenter.settings.popoverWindows) {
+                        ForEach(QuotaWindowDisplayMode.allCases) { mode in
+                            Text(verbatim: mode.displayName(locale: model.displayLanguage.locale)).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+
+                if presenter.provider == .antigravity {
+                    GridRow(alignment: .firstTextBaseline) {
+                        Text(verbatim: model.displayLanguage.text(
+                            chinese: "選單列模型群組",
+                            english: "Menu Bar Group"
+                        ))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: Binding(
+                            get: { model.antigravityToolbarGroup },
+                            set: { model.antigravityToolbarGroup = $0 }
+                        )) {
+                            ForEach(availableAntigravityGroups, id: \.self) { name in
+                                Text(verbatim: name).tag(AntigravityToolbarGroupSelection.group(name))
+                            }
+                            Text(verbatim: AntigravityToolbarGroupSelection.highestUsed.displayName(
+                                locale: model.displayLanguage.locale
+                            ))
+                                .tag(AntigravityToolbarGroupSelection.highestUsed)
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+
+                    GridRow(alignment: .firstTextBaseline) {
+                        Text(verbatim: model.displayLanguage.text(
+                            chinese: "詳情面板群組",
+                            english: "Popover Groups"
+                        ))
+                            .foregroundStyle(.secondary)
+                        Picker("", selection: Binding(
+                            get: { model.antigravityPopoverGroup },
+                            set: { model.antigravityPopoverGroup = $0 }
+                        )) {
+                            Text(verbatim: AntigravityPopoverGroupSelection.all.displayName(
+                                locale: model.displayLanguage.locale
+                            ))
+                                .tag(AntigravityPopoverGroupSelection.all)
+                            ForEach(availableAntigravityGroups, id: \.self) { name in
+                                Text(verbatim: name).tag(AntigravityPopoverGroupSelection.group(name))
+                            }
+                        }
+                        .labelsHidden()
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
                 }
 
                 GridRow(alignment: .firstTextBaseline) {
@@ -418,7 +526,8 @@ private struct ProviderSettingsRow: View {
             .disabled(!presenter.settings.isEnabled)
 
             let interval = presenter.settings.refreshInterval
-            if presenter.provider == .claude {
+            switch presenter.provider {
+            case .claude:
                 Text(model.displayLanguage.text(
                     chinese: "每天約 \(interval.refreshesPerDay) 次更新。頻率較高不一定更即時，因為 Claude Code 可能回傳快取資料。",
                     english: "About \(interval.refreshesPerDay) updates per day. More frequent updates may not be fresher because Claude Code can return cached data."
@@ -430,11 +539,18 @@ private struct ProviderSettingsRow: View {
                         .font(.caption)
                         .foregroundStyle(.orange)
                 }
-            } else {
+            case .codex:
                 let tokenInterval = presenter.codexTokenRefreshInterval
                 Text(model.displayLanguage.text(
                     chinese: "額度與 Token 統計使用獨立排程，約每天更新 \(interval.refreshesPerDay) 次與 \(tokenInterval.refreshesPerDay) 次；按「重新整理」會同時更新兩者。圖表範圍只影響顯示，不會刪除 Codex 回傳的資料。",
                     english: "Quota and token statistics use separate schedules: about \(interval.refreshesPerDay) and \(tokenInterval.refreshesPerDay) updates per day. Refresh updates both. Chart Range affects only what is shown and does not delete Codex data."
+                ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            case .antigravity:
+                Text(verbatim: model.displayLanguage.text(
+                    chinese: "每天約 \(interval.refreshesPerDay) 次更新。若方案沒有 5 小時額度（例如 Free 方案），選單列會自動改為單槽 7 天顯示。",
+                    english: "About \(interval.refreshesPerDay) updates per day. When a plan has no 5-hour window (such as the Free plan), the menu bar automatically shows a single 7-day gauge."
                 ))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
@@ -459,6 +575,8 @@ private struct DeveloperSettingsTab: View {
             ClaudeExecutableSettings(model: model)
 
             CodexExecutableSettings(model: model)
+
+            AntigravityExecutableSettings(model: model)
 
             Section {
                 Text("Claude Code attaches a structured usage report to `/usage`. When it could not reach the server, that report holds no figures, and the app marks the last reading as stale instead of showing the older numbers Claude Code still prints. Verified with the network blocked.")
@@ -601,6 +719,69 @@ private struct CodexExecutableSettings: View {
     }
 }
 
+private struct AntigravityExecutableSettings: View {
+    let model: AppModel
+    @State private var draft = ""
+
+    private var normalizedDraft: String {
+        draft.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var resolvedPath: Result<URL, UsageError> {
+        do {
+            let path = normalizedDraft.isEmpty ? nil : normalizedDraft
+            return .success(try AntigravityExecutableLocator(configuredPath: path).locate())
+        } catch let error as UsageError {
+            return .failure(error)
+        } catch {
+            return .failure(.antigravityExecutableNotFound)
+        }
+    }
+
+    var body: some View {
+        Section {
+            TextField("Leave blank to auto-detect", text: $draft)
+                .font(.caption.monospaced())
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { model.setAntigravityExecutablePath(draft) }
+            HStack {
+                Button("Apply") { model.setAntigravityExecutablePath(draft) }
+                    .disabled(normalizedDraft == model.antigravityExecutablePath)
+                Button("Use Auto-Detection") {
+                    draft = ""
+                    model.setAntigravityExecutablePath("")
+                }
+                .disabled(model.antigravityExecutablePath.isEmpty && normalizedDraft.isEmpty)
+            }
+            switch resolvedPath {
+            case .success(let url):
+                Label(url.path, systemImage: "checkmark.circle")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            case .failure(let error):
+                Label(error.shortDescription(locale: model.displayLanguage.locale), systemImage: "exclamationmark.triangle")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
+            LabeledContent(model.displayLanguage.text(chinese: "執行指令", english: "Command Run")) {
+                Text(verbatim: "agy " + AntigravityUsageCommand.arguments.joined(separator: " "))
+                    .font(.caption2.monospaced())
+                    .textSelection(.enabled)
+            }
+            Text(verbatim: model.displayLanguage.text(
+                chinese: "App 以固定參數直接執行此檔案，不經 shell，也不會啟動登入流程或消耗模型額度。CLI 日誌會導向每次查詢專屬的空白暫存目錄，結束後即刪除。",
+                english: "The app executes this file directly with those fixed arguments. It does not use a shell, never starts a sign-in flow, and runs zero model turns. CLI logs are redirected to a per-query temporary directory that is removed after exit."
+            ))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text(verbatim: model.displayLanguage.text(chinese: "Antigravity CLI（agy）", english: "Antigravity CLI (agy)"))
+        }
+        .onAppear { draft = model.antigravityExecutablePath }
+    }
+}
+
 private struct AboutTab: View {
     let model: AppModel
 
@@ -634,7 +815,10 @@ private struct AboutTab: View {
                 .textSelection(.enabled)
             // Required, not decorative: the app draws its own artwork precisely so it
             // makes no claim to either vendor's brand, and saying so is part of that.
-            Text("This app is not affiliated with or endorsed by Anthropic or OpenAI. All icons are original designs and do not use official logos.")
+            Text(verbatim: model.displayLanguage.text(
+                chinese: "本 App 與 Anthropic、OpenAI 或 Google 均無隸屬關係，也未獲其背書。所有圖示為原創設計，未使用任何官方標誌。",
+                english: "This app is not affiliated with or endorsed by Anthropic, OpenAI, or Google. All icons are original designs and do not use official logos."
+            ))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

@@ -59,12 +59,14 @@ public struct GaugeWindowRenderModel: Sendable, Hashable {
     }
 }
 
-/// One provider, one shared frame, two fixed slots. Neither slot falls back to the
-/// other quota or to a model-scoped weekly meter.
+/// One provider, one shared frame, with one or two fixed slots depending on the
+/// provider's effective toolbar display mode. Neither slot falls back to the other
+/// quota or to an unrelated model-scoped meter.
 public struct GaugeRenderModel: Sendable, Hashable {
     public let provider: ProviderKind
     public let session: GaugeWindowRenderModel
     public let weekly: GaugeWindowRenderModel
+    public let displayedWindows: QuotaWindowDisplayMode
     public let frameStyle: GaugeFrameStyle
     public var glyph: String { provider.identityLetter }
     public let accessibilityLabel: String
@@ -73,12 +75,14 @@ public struct GaugeRenderModel: Sendable, Hashable {
         provider: ProviderKind,
         session: GaugeWindowRenderModel,
         weekly: GaugeWindowRenderModel,
+        displayedWindows: QuotaWindowDisplayMode = .both,
         frameStyle: GaugeFrameStyle,
         accessibilityLabel: String
     ) {
         self.provider = provider
         self.session = session
         self.weekly = weekly
+        self.displayedWindows = displayedWindows
         self.frameStyle = frameStyle
         self.accessibilityLabel = accessibilityLabel
     }
@@ -133,16 +137,46 @@ public enum GaugeStyleResolver {
         }
     }
 
+    /// Resolves the effective toolbar window mode. Antigravity Free plans (and
+    /// weekly-only model groups) omit the 5-hour bucket altogether; collapsing from
+    /// `.both` to `.weeklyOnly` avoids showing an empty placeholder half.
+    public static func effectiveDisplayedWindows(
+        provider: ProviderKind,
+        state: UsageDisplayState,
+        requested: QuotaWindowDisplayMode,
+        antigravityToolbarGroup: AntigravityToolbarGroupSelection = .default
+    ) -> QuotaWindowDisplayMode {
+        guard provider == .antigravity,
+              requested == .both,
+              let snapshot = state.snapshot else {
+            return requested
+        }
+        let hasSession = snapshot.quotaWindow(for: .session, antigravityGroup: antigravityToolbarGroup) != nil
+        let hasWeekly = snapshot.quotaWindow(for: .weeklyAll, antigravityGroup: antigravityToolbarGroup) != nil
+        if !hasSession && hasWeekly {
+            return .weeklyOnly
+        }
+        return requested
+    }
+
     public static func renderModel(
         provider: ProviderKind,
         state: UsageDisplayState,
+        displayedWindows: QuotaWindowDisplayMode = .both,
+        antigravityToolbarGroup: AntigravityToolbarGroupSelection = .default,
         now: Date = Date(),
         calendar: Calendar = .current,
         locale: Locale = Locale(identifier: "en_US")
     ) -> GaugeRenderModel {
         let frameStyle = frameStyle(for: state)
+        let effective = effectiveDisplayedWindows(
+            provider: provider,
+            state: state,
+            requested: displayedWindows,
+            antigravityToolbarGroup: antigravityToolbarGroup
+        )
         func segment(_ kind: UsageWindow.Kind) -> GaugeWindowRenderModel {
-            guard let window = state.snapshot?.quotaWindow(for: kind) else {
+            guard let window = state.snapshot?.quotaWindow(for: kind, antigravityGroup: antigravityToolbarGroup) else {
                 let notListed = state.snapshot?.isQuotaNotListed(kind) == true
                 return GaugeWindowRenderModel(
                     fillLevel: .unknown,
@@ -163,9 +197,15 @@ public enum GaugeStyleResolver {
             provider: provider,
             session: segment(.session),
             weekly: segment(.weeklyAll),
+            displayedWindows: effective,
             frameStyle: frameStyle,
             accessibilityLabel: accessibilityLabel(
-                provider: provider, state: state, now: now, locale: locale
+                provider: provider,
+                state: state,
+                displayedWindows: effective,
+                antigravityToolbarGroup: antigravityToolbarGroup,
+                now: now,
+                locale: locale
             )
         )
     }
@@ -175,21 +215,39 @@ public enum GaugeStyleResolver {
     public static func accessibilityLabel(
         provider: ProviderKind,
         state: UsageDisplayState,
+        displayedWindows: QuotaWindowDisplayMode = .both,
+        antigravityToolbarGroup: AntigravityToolbarGroupSelection = .default,
         now: Date = Date(),
         locale: Locale = .current
     ) -> String {
         let chinese = TimeFormatting.usesTraditionalChinese(locale)
-        let readings = [UsageWindow.Kind.session, .weeklyAll].map { kind in
+        let effective = effectiveDisplayedWindows(
+            provider: provider,
+            state: state,
+            requested: displayedWindows,
+            antigravityToolbarGroup: antigravityToolbarGroup
+        )
+        var kinds: [UsageWindow.Kind] = []
+        if effective.includesSession { kinds.append(.session) }
+        if effective.includesWeekly { kinds.append(.weeklyAll) }
+
+        let readings = kinds.map { kind in
             let title = kind == .session ? (chinese ? "5 小時" : "5 hours") : (chinese ? "7 天" : "7 days")
-            guard let window = state.snapshot?.quotaWindow(for: kind) else {
+            guard let window = state.snapshot?.quotaWindow(for: kind, antigravityGroup: antigravityToolbarGroup) else {
                 if state.snapshot?.isQuotaNotListed(kind) == true {
                     return chinese ? "\(title)未列出此限制" : "\(title): no limit listed by the service"
                 }
                 return chinese ? "\(title)額度未知（尚未提供）" : "\(title): usage unknown (not reported)"
             }
+            let scopeLabel: String
+            if provider == .antigravity, let groupName = window.modelDisplayName {
+                scopeLabel = chinese ? "\(title)（\(groupName)）" : "\(title) (\(groupName))"
+            } else {
+                scopeLabel = title
+            }
             let reading = chinese
-                ? "\(title)額度已用約 \(window.used.usedPercent)%，剩餘約 \(window.used.remainingPercent)%"
-                : "\(title), approximately \(window.used.usedPercent)% used, \(window.used.remainingPercent)% remaining"
+                ? "\(scopeLabel)額度已用約 \(window.used.usedPercent)%，剩餘約 \(window.used.remainingPercent)%"
+                : "\(scopeLabel), approximately \(window.used.usedPercent)% used, \(window.used.remainingPercent)% remaining"
             if window.hasExpired(at: now) {
                 return reading + (chinese ? "（已過重設時間，等待更新）" : " (past reset, waiting for an update)")
             }

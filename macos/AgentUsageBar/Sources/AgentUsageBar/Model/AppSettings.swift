@@ -7,6 +7,24 @@ struct ProviderSettings: Sendable, Equatable {
     var isEnabled: Bool
     var identityColor: IdentityColor
     var refreshInterval: RefreshInterval
+    /// Which windows are drawn in the menu bar gauge. Independent from `popoverWindows`.
+    var toolbarWindows: QuotaWindowDisplayMode
+    /// Which windows are shown inside the detail popover. Independent from `toolbarWindows`.
+    var popoverWindows: QuotaWindowDisplayMode
+
+    init(
+        isEnabled: Bool,
+        identityColor: IdentityColor,
+        refreshInterval: RefreshInterval,
+        toolbarWindows: QuotaWindowDisplayMode = .both,
+        popoverWindows: QuotaWindowDisplayMode = .both
+    ) {
+        self.isEnabled = isEnabled
+        self.identityColor = identityColor
+        self.refreshInterval = refreshInterval
+        self.toolbarWindows = toolbarWindows
+        self.popoverWindows = popoverWindows
+    }
 }
 
 /// The language selected inside the app. This is deliberately independent from the
@@ -57,7 +75,7 @@ enum MenuBarLayout: String, CaseIterable, Sendable, Identifiable {
 
     func displayName(language: AppLanguage) -> String {
         switch self {
-        case .separate: language.text(chinese: "分開顯示（兩個圖示）", english: "Separate (two icons)")
+        case .separate: language.text(chinese: "分開顯示（各別圖示）", english: "Separate (per-provider icons)")
         case .combined: language.text(chinese: "合併顯示（一個圖示）", english: "Combined (one icon)")
         }
     }
@@ -124,10 +142,14 @@ enum SettingsStore {
         let isEnabled = defaults.object(forKey: key(provider, "enabled")) as? Bool ?? defaultEnabled(for: provider)
         let colorRaw = defaults.string(forKey: key(provider, "identityColor"))
         let intervalRaw = defaults.object(forKey: key(provider, "refreshInterval")) as? Int
+        let toolbarWindowsRaw = defaults.string(forKey: key(provider, "toolbarWindows"))
+        let popoverWindowsRaw = defaults.string(forKey: key(provider, "popoverWindows"))
         return ProviderSettings(
             isEnabled: isEnabled,
             identityColor: colorRaw.flatMap(IdentityColor.init(rawValue:)) ?? defaultColor(for: provider),
-            refreshInterval: intervalRaw.flatMap(RefreshInterval.init(rawValue:)) ?? defaultRefreshInterval(for: provider)
+            refreshInterval: intervalRaw.flatMap(RefreshInterval.init(rawValue:)) ?? defaultRefreshInterval(for: provider),
+            toolbarWindows: toolbarWindowsRaw.flatMap(QuotaWindowDisplayMode.init(rawValue:)) ?? .both,
+            popoverWindows: popoverWindowsRaw.flatMap(QuotaWindowDisplayMode.init(rawValue:)) ?? .both
         )
     }
 
@@ -135,12 +157,17 @@ enum SettingsStore {
         defaults.set(settings.isEnabled, forKey: key(provider, "enabled"))
         defaults.set(settings.identityColor.rawValue, forKey: key(provider, "identityColor"))
         defaults.set(settings.refreshInterval.rawValue, forKey: key(provider, "refreshInterval"))
+        defaults.set(settings.toolbarWindows.rawValue, forKey: key(provider, "toolbarWindows"))
+        defaults.set(settings.popoverWindows.rawValue, forKey: key(provider, "popoverWindows"))
     }
 
     private static let layoutKey = "\(version).menuBarLayout"
     private static let languageKey = "\(version).displayLanguage"
     private static let claudeExecutablePathKey = "\(version).claudeExecutablePath"
     private static let codexExecutablePathKey = "\(version).codexExecutablePath"
+    private static let antigravityExecutablePathKey = "\(version).antigravityExecutablePath"
+    private static let antigravityToolbarGroupKey = "\(version).antigravityToolbarGroup"
+    private static let antigravityPopoverGroupKey = "\(version).antigravityPopoverGroup"
     private static let codexTokenHistoryDaysKey = "\(version).codexTokenHistoryDays"
     private static let codexTokenRefreshIntervalKey = "\(version).codexTokenRefreshInterval"
     private static let windowDisclosureKey = "\(version).windowDisclosure"
@@ -177,6 +204,40 @@ enum SettingsStore {
 
     static func saveCodexExecutablePath(_ path: String, defaults: UserDefaults = .standard) {
         defaults.set(path, forKey: codexExecutablePathKey)
+    }
+
+    static func loadAntigravityExecutablePath(defaults: UserDefaults = .standard) -> String {
+        defaults.string(forKey: antigravityExecutablePathKey) ?? ""
+    }
+
+    static func saveAntigravityExecutablePath(_ path: String, defaults: UserDefaults = .standard) {
+        defaults.set(path, forKey: antigravityExecutablePathKey)
+    }
+
+    static func loadAntigravityToolbarGroup(
+        defaults: UserDefaults = .standard
+    ) -> AntigravityToolbarGroupSelection {
+        AntigravityToolbarGroupSelection(storedValue: defaults.string(forKey: antigravityToolbarGroupKey))
+    }
+
+    static func saveAntigravityToolbarGroup(
+        _ selection: AntigravityToolbarGroupSelection,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(selection.storedValue, forKey: antigravityToolbarGroupKey)
+    }
+
+    static func loadAntigravityPopoverGroup(
+        defaults: UserDefaults = .standard
+    ) -> AntigravityPopoverGroupSelection {
+        AntigravityPopoverGroupSelection(storedValue: defaults.string(forKey: antigravityPopoverGroupKey))
+    }
+
+    static func saveAntigravityPopoverGroup(
+        _ selection: AntigravityPopoverGroupSelection,
+        defaults: UserDefaults = .standard
+    ) {
+        defaults.set(selection.storedValue, forKey: antigravityPopoverGroupKey)
     }
 
     static func loadCodexTokenHistoryPeriod(
@@ -228,6 +289,7 @@ enum SettingsStore {
         switch provider {
         case .claude: true
         case .codex: true
+        case .antigravity: true
         }
     }
 
@@ -239,6 +301,7 @@ enum SettingsStore {
         switch provider {
         case .claude: .purple
         case .codex: .teal
+        case .antigravity: .blue
         }
     }
 }

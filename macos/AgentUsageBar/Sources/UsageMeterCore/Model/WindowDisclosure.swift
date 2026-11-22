@@ -53,11 +53,21 @@ public struct WindowDisclosure: Sendable, Equatable {
 
     public static func isCollapsedByDefault(_ window: UsageWindow) -> Bool {
         if case .weeklyScoped = window.kind { return true }
+        if case .sessionScoped = window.kind { return true }
         return false
     }
 
+    public static func isCollapsedByDefault(_ window: UsageWindow, provider: ProviderKind) -> Bool {
+        if provider == .antigravity {
+            if case .unrecognized = window.kind { return false }
+            guard let groupName = window.modelDisplayName else { return false }
+            return groupName != AntigravityToolbarGroupSelection.defaultGroupName
+        }
+        return isCollapsedByDefault(window)
+    }
+
     public func isCollapsed(_ window: UsageWindow, provider: ProviderKind) -> Bool {
-        overrides[Self.key(window, provider: provider)] ?? Self.isCollapsedByDefault(window)
+        overrides[Self.key(window, provider: provider)] ?? Self.isCollapsedByDefault(window, provider: provider)
     }
 
     public mutating func toggle(_ window: UsageWindow, provider: ProviderKind) {
@@ -67,7 +77,7 @@ public struct WindowDisclosure: Sendable, Equatable {
         guard Self.isStorable(key) else { return }
 
         let collapsed = !isCollapsed(window, provider: provider)
-        guard collapsed != Self.isCollapsedByDefault(window) else {
+        guard collapsed != Self.isCollapsedByDefault(window, provider: provider) else {
             overrides[key] = nil
             return
         }

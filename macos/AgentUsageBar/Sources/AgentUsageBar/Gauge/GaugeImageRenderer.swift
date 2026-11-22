@@ -15,7 +15,11 @@ import UsageMeterCore
 /// on appearance changes and every colour here is a dynamic system colour.
 enum GaugeImageRenderer {
 
+    /// Dual-window (5h + 7d) gauge footprint.
     static let size = NSSize(width: 27, height: 18)
+    /// Single-window (5h only or 7d only) gauge footprint, saving menu bar space when
+    /// a provider displays one window (such as Antigravity Free or a user preference).
+    static let singleSlotSize = NSSize(width: 20, height: 18)
 
     private static let glyphWidth: CGFloat = 7.5
     private static let frameStroke: CGFloat = 1.25
@@ -23,8 +27,13 @@ enum GaugeImageRenderer {
     /// Keeps 1% used from rendering as nothing at all.
     private static let minimumVisibleFill: CGFloat = 2.0
 
+    static func size(for model: GaugeRenderModel) -> NSSize {
+        model.displayedWindows == .both ? size : singleSlotSize
+    }
+
     static func image(for model: GaugeRenderModel, identityColor: NSColor) -> NSImage {
-        let image = NSImage(size: size, flipped: false) { _ in
+        let imageSize = size(for: model)
+        let image = NSImage(size: imageSize, flipped: false) { _ in
             draw(model: model, identityColor: identityColor)
             return true
         }
@@ -36,13 +45,15 @@ enum GaugeImageRenderer {
     static func draw(model: GaugeRenderModel, identityColor: NSColor) {
         let dimmed = model.frameStyle == .dashedEmpty || model.frameStyle == .disabledNeutral
         let outlineColor = dimmed ? identityColor.withAlphaComponent(0.55) : identityColor
+        let isDualSlot = model.displayedWindows == .both
+        let frameWidth: CGFloat = isDualSlot ? 18 : 11
 
         drawGlyph(model.glyph, color: outlineColor)
 
         let frameRect = NSRect(
             x: glyphWidth + 1.5,
             y: 1,
-            width: 18,
+            width: frameWidth,
             height: size.height - 2
         )
         let framePath = NSBezierPath(roundedRect: frameRect.insetBy(dx: frameStroke / 2, dy: frameStroke / 2), xRadius: 1.8, yRadius: 1.8)
@@ -65,22 +76,30 @@ enum GaugeImageRenderer {
             NSBezierPath(roundedRect: innerRect, xRadius: 1.5, yRadius: 1.5).fill()
         }
 
-        // A single frame and one divider: there is no gap or duplicated border
-        // between the five-hour (left) and seven-day (right) meters.
-        let divider = NSBezierPath()
-        divider.move(to: NSPoint(x: frameRect.midX, y: frameRect.minY + frameStroke))
-        divider.line(to: NSPoint(x: frameRect.midX, y: frameRect.maxY - frameStroke))
-        divider.lineWidth = 1
-        outlineColor.setStroke()
-        divider.stroke()
+        let segments: [(GaugeWindowRenderModel, NSRect)]
+        if isDualSlot {
+            // A single frame and one divider: there is no gap or duplicated border
+            // between the five-hour (left) and seven-day (right) meters.
+            let divider = NSBezierPath()
+            divider.move(to: NSPoint(x: frameRect.midX, y: frameRect.minY + frameStroke))
+            divider.line(to: NSPoint(x: frameRect.midX, y: frameRect.maxY - frameStroke))
+            divider.lineWidth = 1
+            outlineColor.setStroke()
+            divider.stroke()
 
-        let halves = [
-            NSRect(x: innerRect.minX, y: innerRect.minY,
-                   width: frameRect.midX - 0.5 - innerRect.minX, height: innerRect.height),
-            NSRect(x: frameRect.midX + 0.5, y: innerRect.minY,
-                   width: innerRect.maxX - frameRect.midX - 0.5, height: innerRect.height),
-        ]
-        for (segment, rect) in zip([model.session, model.weekly], halves) {
+            let halves = [
+                NSRect(x: innerRect.minX, y: innerRect.minY,
+                       width: frameRect.midX - 0.5 - innerRect.minX, height: innerRect.height),
+                NSRect(x: frameRect.midX + 0.5, y: innerRect.minY,
+                       width: innerRect.maxX - frameRect.midX - 0.5, height: innerRect.height),
+            ]
+            segments = Array(zip([model.session, model.weekly], halves))
+        } else {
+            let singleSegment = model.displayedWindows == .sessionOnly ? model.session : model.weekly
+            segments = [(singleSegment, innerRect)]
+        }
+
+        for (segment, rect) in segments {
             switch segment.availability {
             case .unknown:
                 drawNoReadingMark(in: rect)
@@ -283,7 +302,8 @@ extension GaugeImageRenderer {
         guard !models.isEmpty else { return neutralAppIcon() }
 
         let spacing: CGFloat = 3
-        let totalWidth = size.width * CGFloat(models.count) + spacing * CGFloat(models.count - 1)
+        let totalWidth = models.reduce(CGFloat(0)) { $0 + size(for: $1.model).width }
+            + spacing * CGFloat(models.count - 1)
 
         let image = NSImage(size: NSSize(width: totalWidth, height: size.height), flipped: false) { _ in
             var x: CGFloat = 0
@@ -294,7 +314,7 @@ extension GaugeImageRenderer {
                 transform.concat()
                 draw(model: entry.model, identityColor: entry.identityColor)
                 NSGraphicsContext.restoreGraphicsState()
-                x += size.width + spacing
+                x += size(for: entry.model).width + spacing
             }
             return true
         }
@@ -306,5 +326,11 @@ extension GaugeImageRenderer {
     static func combinedWidth(count: Int) -> CGFloat {
         guard count > 0 else { return 24 }
         return size.width * CGFloat(count) + 3 * CGFloat(count - 1) + 8
+    }
+
+    static func combinedWidth(for models: [GaugeRenderModel]) -> CGFloat {
+        guard !models.isEmpty else { return 24 }
+        let width = models.reduce(CGFloat(0)) { $0 + size(for: $1).width }
+        return width + 3 * CGFloat(models.count - 1) + 8
     }
 }

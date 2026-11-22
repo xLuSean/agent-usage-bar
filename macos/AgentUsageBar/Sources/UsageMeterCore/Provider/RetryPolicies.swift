@@ -27,6 +27,12 @@ public struct BackoffPolicy: Sendable, Hashable {
         cap: 900,
         multiplier: 2
     )
+
+    public static let antigravity = BackoffPolicy(
+        initial: 60,
+        cap: 1800,
+        multiplier: 2
+    )
 }
 
 extension BackoffPolicy {
@@ -36,6 +42,7 @@ extension BackoffPolicy {
         switch provider {
         case .claude: .claude
         case .codex: .codex
+        case .antigravity: .antigravity
         }
     }
 }

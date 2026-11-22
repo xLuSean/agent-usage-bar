@@ -6,7 +6,7 @@ Agent Usage Bar 在選單列呈現 agent 訂閱額度的消耗程度。它是**�
 
 共同層只定義**使用者看得到的那一層** —— 量表的視覺語言與狀態語意。資料如何取得、憑證如何處理、輪詢與退避參數、錯誤型別，各 provider 各自決定，而且**部分不應強行統一**（見 §5）。
 
-Claude 與 Codex provider 都已實作，而且**兩邊現在都透過官方 CLI 取得資料**。Claude 每次查詢啟動一個一次性子程序執行 `/usage`；Codex 維持一個長駐 App Server 並以 stdio JSONL 查詢。兩者只在 `UsageProvider` 回傳的 snapshot 與共用顯示語意交會，傳輸與生命週期互不綁定。
+Claude、Codex 與 Antigravity provider 都已實作，而且**三邊都透過官方 CLI 取得資料**。Claude 與 Antigravity 每次查詢各啟動一個一次性子程序執行唯讀 `/usage`；Codex 維持一個長駐 App Server 並以 stdio JSONL 查詢。三者只在 `UsageProvider` 回傳的 snapshot 與共用顯示語意交會，傳輸與生命週期互不綁定。
 
 ## 2. 元件分層
 
@@ -40,6 +40,11 @@ UsageProvider protocol           fetch() async throws -> UsageSnapshot
   │    ├─ CodexJSONLBuffer            拆包／黏包與壞行隔離
   │    ├─ CodexRateLimitDecoder       一般 codex bucket、Credits、schema 容錯
   │    └─ CodexAccountUsageDecoder    官方帳號 Token summary／daily buckets
+  └─ AntigravityUsageProvider
+       ├─ AntigravityExecutableLocator GUI PATH、指定路徑與可執行驗證
+       ├─ AntigravityUsageCommand      固定 arguments 與隔離 log；唯一可建構 Process 的地方
+       ├─ AntigravityUsageDecoder      結構化多群組 JSON、remaining_fraction 精確換算、fail closed
+       └─ AntigravitySignInRecovery    只提供可複製的 `agy` 指令，不執行登入
 
 Debug-only diagnostics
   └─ DemoScenario                    合成狀態；只供 render／self-test，不進 Release

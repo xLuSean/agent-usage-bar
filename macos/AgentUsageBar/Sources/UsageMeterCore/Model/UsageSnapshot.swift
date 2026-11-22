@@ -5,21 +5,24 @@ import Foundation
 public enum ProviderKind: String, Sendable, Hashable, CaseIterable, Codable {
     case claude
     case codex
+    case antigravity
 
     public var displayName: String {
         switch self {
         case .claude: "Claude"
         case .codex: "Codex"
+        case .antigravity: "Antigravity"
         }
     }
 
     /// The identity cue that does not depend on colour. Colour alone must never be the
     /// only carrier of identity — two similar custom colours, or a colour-vision
-    /// difference, and the two gauges become indistinguishable.
+    /// difference, and the gauges become indistinguishable.
     public var identityLetter: String {
         switch self {
         case .claude: "C"
         case .codex: "X"
+        case .antigravity: "A"
         }
     }
 }
@@ -42,6 +45,8 @@ public enum UsageSourcePath: String, Sendable, Hashable, Codable {
     case messagesFallback
     /// Codex `account/rateLimits/read` over the local app-server.
     case codexAppServer
+    /// Antigravity CLI's read-only `/usage` command, run as a one-shot subprocess.
+    case antigravityCLI
     /// Synthetic data. Never a live reading.
     case fixture
 
@@ -65,6 +70,7 @@ public enum UsageSourcePath: String, Sendable, Hashable, Codable {
             case .usageEndpoint: "usage 端點（已退場）"
             case .messagesFallback: "fallback（已退場）"
             case .codexAppServer: "Codex app-server"
+            case .antigravityCLI: "Antigravity CLI /usage"
             case .fixture: "fixture（示範資料）"
             }
         }
@@ -73,6 +79,7 @@ public enum UsageSourcePath: String, Sendable, Hashable, Codable {
         case .usageEndpoint: "usage endpoint (retired)"
         case .messagesFallback: "fallback (retired)"
         case .codexAppServer: "Codex app-server"
+        case .antigravityCLI: "Antigravity CLI /usage"
         case .fixture: "fixture (demo data)"
         }
     }
@@ -168,9 +175,15 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
     }
 
     /// The two general quotas, independently selected. Codex's nullable duration must
-    /// be known before a reading may be labelled five hours or seven days. This also
-    /// reads old snapshots whose kind was inferred only from primary/secondary.
-    public func quotaWindow(for kind: UsageWindow.Kind) -> UsageWindow? {
+    /// be known before a reading may be labelled five hours or seven days. Antigravity
+    /// partitions quota by model group, so its selection honours the chosen toolbar group.
+    public func quotaWindow(
+        for kind: UsageWindow.Kind,
+        antigravityGroup: AntigravityToolbarGroupSelection = .default
+    ) -> UsageWindow? {
+        if provider == .antigravity {
+            return antigravityQuotaWindow(for: kind, selection: antigravityGroup)
+        }
         let matches = windows.filter { window in
             if provider == .codex {
                 guard meteredLimitID == nil || meteredLimitID == "codex",
@@ -186,6 +199,69 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
         return matches.count == 1 ? matches.first : nil
     }
 
+    /// Distinct Antigravity model group names in the order returned by the provider.
+    public var antigravityGroupNames: [String] {
+        guard provider == .antigravity else { return [] }
+        var seen = Set<String>()
+        var result: [String] = []
+        for window in windows {
+            if let name = window.modelDisplayName, seen.insert(name).inserted {
+                result.append(name)
+            }
+        }
+        return result
+    }
+
+    /// The resolved Antigravity group name for a toolbar selection, if present in this snapshot.
+    public func resolvedAntigravityToolbarGroup(
+        selection: AntigravityToolbarGroupSelection
+    ) -> String? {
+        guard provider == .antigravity else { return nil }
+        let groups = antigravityGroupNames
+        guard !groups.isEmpty else { return nil }
+        switch selection {
+        case .highestUsed:
+            return nil
+        case .group(let requested):
+            if groups.contains(requested) { return requested }
+            if groups.contains(AntigravityToolbarGroupSelection.defaultGroupName) {
+                return AntigravityToolbarGroupSelection.defaultGroupName
+            }
+            return groups.first
+        }
+    }
+
+    private func antigravityQuotaWindow(
+        for kind: UsageWindow.Kind,
+        selection: AntigravityToolbarGroupSelection
+    ) -> UsageWindow? {
+        let matchingPeriod = windows.filter { window in
+            switch kind {
+            case .session:
+                window.kind == .session || window.kind == .sessionScoped || window.durationMinutes == 300
+            case .weeklyAll:
+                window.kind == .weeklyAll || window.kind == .weeklyScoped || window.durationMinutes == 10_080
+            default:
+                false
+            }
+        }
+        guard !matchingPeriod.isEmpty else { return nil }
+
+        switch selection {
+        case .highestUsed:
+            return matchingPeriod.max { lhs, rhs in
+                lhs.used.normalized < rhs.used.normalized
+            }
+        case .group:
+            if let group = resolvedAntigravityToolbarGroup(selection: selection) {
+                let inGroup = matchingPeriod.filter { $0.modelDisplayName == group }
+                return inGroup.count == 1 ? inGroup.first : nil
+            }
+            let unscoped = matchingPeriod.filter { $0.modelDisplayName == nil }
+            return unscoped.count == 1 ? unscoped.first : nil
+        }
+    }
+
     public func isQuotaNotListed(_ kind: UsageWindow.Kind) -> Bool {
         provider == .claude && claudeLimitListReported == true
             && !windows.contains { $0.kind == kind }
@@ -193,17 +269,33 @@ public struct UsageSnapshot: Sendable, Hashable, Codable {
 
     /// Windows in a stable display order regardless of upstream array order.
     public var orderedWindows: [UsageWindow] {
-        windows.sorted { lhs, rhs in
-            func rank(_ kind: UsageWindow.Kind) -> Int {
-                switch kind {
-                case .session: 0
-                case .weeklyAll: 1
-                case .weeklyScoped: 2
-                case .unrecognized: 3
-                }
+        if provider == .antigravity {
+            // Preserve upstream group order, with 5h before weekly within each group.
+            let groupRank = Dictionary(
+                uniqueKeysWithValues: antigravityGroupNames.enumerated().map { ($0.element, $0.offset) }
+            )
+            return windows.sorted { lhs, rhs in
+                let lg = lhs.modelDisplayName.flatMap { groupRank[$0] } ?? Int.max
+                let rg = rhs.modelDisplayName.flatMap { groupRank[$0] } ?? Int.max
+                if lg != rg { return lg < rg }
+                return Self.kindRank(lhs.kind) < Self.kindRank(rhs.kind)
             }
-            if rank(lhs.kind) != rank(rhs.kind) { return rank(lhs.kind) < rank(rhs.kind) }
+        }
+        return windows.sorted { lhs, rhs in
+            let lr = Self.kindRank(lhs.kind)
+            let rr = Self.kindRank(rhs.kind)
+            if lr != rr { return lr < rr }
             return (lhs.modelDisplayName ?? "") < (rhs.modelDisplayName ?? "")
+        }
+    }
+
+    private static func kindRank(_ kind: UsageWindow.Kind) -> Int {
+        switch kind {
+        case .session: 0
+        case .sessionScoped: 1
+        case .weeklyAll: 2
+        case .weeklyScoped: 3
+        case .unrecognized: 4
         }
     }
 

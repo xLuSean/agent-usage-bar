@@ -17,6 +17,7 @@ struct UsagePopoverView: View {
     let presenters: [ProviderPresenter]
     let language: AppLanguage
     let codexTokenHistoryPeriod: CodexTokenHistoryPeriod
+    let antigravityPopoverGroup: AntigravityPopoverGroupSelection
     let now: Date
     let onOpenSettings: () -> Void
     /// The controller measures the unscrolled view first. Scrolling is enabled only
@@ -33,6 +34,7 @@ struct UsagePopoverView: View {
         presenters: [ProviderPresenter],
         language: AppLanguage = .english,
         codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
+        antigravityPopoverGroup: AntigravityPopoverGroupSelection = .default,
         now: Date = Date(),
         allowsScrolling: Bool = true,
         disclosure: WindowDisclosureModel = WindowDisclosureModel(),
@@ -42,6 +44,7 @@ struct UsagePopoverView: View {
         self.presenters = presenters
         self.language = language
         self.codexTokenHistoryPeriod = codexTokenHistoryPeriod
+        self.antigravityPopoverGroup = antigravityPopoverGroup
         self.now = now
         self.allowsScrolling = allowsScrolling
         self.disclosure = disclosure
@@ -53,6 +56,7 @@ struct UsagePopoverView: View {
         presenter: ProviderPresenter,
         language: AppLanguage = .english,
         codexTokenHistoryPeriod: CodexTokenHistoryPeriod = .thirtyDays,
+        antigravityPopoverGroup: AntigravityPopoverGroupSelection = .default,
         now: Date = Date(),
         allowsScrolling: Bool = true,
         disclosure: WindowDisclosureModel = WindowDisclosureModel(),
@@ -63,6 +67,7 @@ struct UsagePopoverView: View {
             presenters: [presenter],
             language: language,
             codexTokenHistoryPeriod: codexTokenHistoryPeriod,
+            antigravityPopoverGroup: antigravityPopoverGroup,
             now: now,
             allowsScrolling: allowsScrolling,
             disclosure: disclosure,
@@ -100,6 +105,7 @@ struct UsagePopoverView: View {
                     presenter: presenter,
                     language: language,
                     codexTokenHistoryPeriod: codexTokenHistoryPeriod,
+                    antigravityPopoverGroup: antigravityPopoverGroup,
                     now: now,
                     disclosure: disclosure,
                     onContentHeightChange: onContentHeightChange
@@ -132,6 +138,7 @@ private struct ProviderSection: View {
     @Bindable var presenter: ProviderPresenter
     let language: AppLanguage
     let codexTokenHistoryPeriod: CodexTokenHistoryPeriod
+    let antigravityPopoverGroup: AntigravityPopoverGroupSelection
     let now: Date
     let disclosure: WindowDisclosureModel
     let onContentHeightChange: () -> Void
@@ -147,17 +154,35 @@ private struct ProviderSection: View {
                     forType: .string
                 )
             } label: {
-                Label(
-                    didCopyLoginCommand ? "Recovery command copied" : "Copy Claude Code recovery command",
-                    systemImage: didCopyLoginCommand ? "checkmark" : "doc.on.doc"
-                )
+                if presenter.provider == .antigravity {
+                    Label(
+                        didCopyLoginCommand
+                            ? language.text(chinese: "已複製恢復指令", english: "Recovery command copied")
+                            : language.text(chinese: "複製 Antigravity 恢復指令", english: "Copy Antigravity recovery command"),
+                        systemImage: didCopyLoginCommand ? "checkmark" : "doc.on.doc"
+                    )
+                } else {
+                    Label(
+                        didCopyLoginCommand ? "Recovery command copied" : "Copy Claude Code recovery command",
+                        systemImage: didCopyLoginCommand ? "checkmark" : "doc.on.doc"
+                    )
+                }
             }
-            // One command, one branch. The `setup-token` case that needed
-            // `claude auth login` went away with the credential path — this app no
-            // longer inspects token scopes.
-            Text("Copies `claude`. Paste it into Terminal to launch Claude Code once. If prompted, finish signing in, then return and click Refresh. This app runs the read-only /usage query, but never signs you in.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            if presenter.provider == .antigravity {
+                Text(verbatim: language.text(
+                    chinese: "複製 `agy`。請貼到終端機啟動 Antigravity CLI 完成登入，再回來按「重新整理」。本 App 只執行唯讀的 /usage 查詢，不會替你登入。",
+                    english: "Copies `agy`. Paste it into Terminal to launch the Antigravity CLI, sign in if prompted, then return and click Refresh. This app runs the read-only /usage query and never signs you in."
+                ))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                // One command, one branch. The `setup-token` case that needed
+                // `claude auth login` went away with the credential path — this app no
+                // longer inspects token scopes.
+                Text("Copies `claude`. Paste it into Terminal to launch Claude Code once. If prompted, finish signing in, then return and click Refresh. This app runs the read-only /usage query, but never signs you in.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -169,6 +194,10 @@ private struct ProviderSection: View {
             }
             if presenter.provider == .claude,
                let command = ClaudeSignInRecovery.command(for: presenter.state.error) {
+                credentialRecoveryAction(command: command)
+            }
+            if presenter.provider == .antigravity,
+               let command = AntigravitySignInRecovery.command(for: presenter.state.error) {
                 credentialRecoveryAction(command: command)
             }
             windowsSection
@@ -289,22 +318,89 @@ private struct ProviderSection: View {
 
     @ViewBuilder
     private var windowsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            quotaRow(.session)
-            quotaRow(.weeklyAll)
-            // Preserve every additional readable meter after the two fixed slots.
-            ForEach(additionalWindows) { window in
-                windowRow(window)
+        let mode = presenter.settings.popoverWindows
+        if presenter.provider == .antigravity {
+            antigravityWindowsSection(mode: mode)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                if mode.includesSession {
+                    quotaRow(.session)
+                }
+                if mode.includesWeekly {
+                    quotaRow(.weeklyAll)
+                }
+                // Preserve every additional readable meter after the fixed slots.
+                ForEach(additionalWindows(for: mode)) { window in
+                    windowRow(window)
+                }
             }
         }
     }
 
-    private var additionalWindows: [UsageWindow] {
+    @ViewBuilder
+    private func antigravityWindowsSection(mode: QuotaWindowDisplayMode) -> some View {
+        let windows = antigravityPopoverWindows(mode: mode)
+        VStack(alignment: .leading, spacing: 10) {
+            if !windows.isEmpty {
+                ForEach(windows) { window in
+                    windowRow(window)
+                }
+            } else if presenter.state.snapshot == nil {
+                if mode.includesSession {
+                    quotaRow(.session)
+                }
+                if mode.includesWeekly {
+                    quotaRow(.weeklyAll)
+                }
+            } else {
+                Text(verbatim: language.text(
+                    chinese: "目前篩選條件下沒有可顯示的額度時間窗。",
+                    english: "No quota windows match the current panel filter."
+                ))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func antigravityPopoverWindows(mode: QuotaWindowDisplayMode) -> [UsageWindow] {
+        guard let snapshot = presenter.state.snapshot else { return [] }
+        let groupFiltered: [UsageWindow]
+        switch antigravityPopoverGroup {
+        case .all:
+            groupFiltered = snapshot.orderedWindows
+        case .group(let name):
+            let matches = snapshot.orderedWindows.filter { $0.modelDisplayName == name }
+            groupFiltered = matches.isEmpty ? snapshot.orderedWindows : matches
+        }
+        return groupFiltered.filter { window in
+            switch window.kind {
+            case .session, .sessionScoped:
+                mode.includesSession
+            case .weeklyAll, .weeklyScoped:
+                mode.includesWeekly
+            case .unrecognized:
+                true
+            }
+        }
+    }
+
+    private func additionalWindows(for mode: QuotaWindowDisplayMode) -> [UsageWindow] {
         guard let snapshot = presenter.state.snapshot else { return [] }
         let shown = Set([UsageWindow.Kind.session, .weeklyAll].compactMap {
             snapshot.quotaWindow(for: $0)?.id
         })
-        return snapshot.orderedWindows.filter { !shown.contains($0.id) }
+        return snapshot.orderedWindows.filter { window in
+            guard !shown.contains(window.id) else { return false }
+            switch window.kind {
+            case .session, .sessionScoped:
+                return mode.includesSession
+            case .weeklyAll, .weeklyScoped:
+                return mode.includesWeekly
+            case .unrecognized:
+                return true
+            }
+        }
     }
 
     @ViewBuilder
@@ -361,7 +457,7 @@ private struct ProviderSection: View {
                     english: "Claude Code reported 0% without a reset time. Refresh after usage begins."
                 )
             )
-        case .claude, .codex:
+        case .claude, .codex, .antigravity:
             MissingResetPresentation(
                 text: language.text(
                     chinese: "重設時間未提供",

@@ -1,6 +1,6 @@
 # Safety model
 
-這個 App 以兩條唯讀路徑查詢額度：Claude 執行官方 CLI 的 `/usage` 唯讀指令；Codex 讓官方 App Server 沿用既有登入。App 本身不讀取或保存兩家的憑證；官方 CLI 仍可能在自己的程序內處理登入或續期。本文件記錄它做什麼、不做什麼，以及為什麼。
+這個 App 以三條唯讀路徑查詢額度：Claude 與 Antigravity 分別執行官方 CLI 的 `/usage` 唯讀指令；Codex 讓官方 App Server 沿用既有登入。App 本身不讀取或保存三家的憑證；官方 CLI 仍可能在自己的程序內處理登入或續期。本文件記錄它做什麼、不做什麼，以及為什麼。
 
 ## 1. 唯讀邊界
 

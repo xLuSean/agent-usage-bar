@@ -54,6 +54,21 @@ final class AppModel {
         }
     }
 
+    var antigravityToolbarGroup: AntigravityToolbarGroupSelection {
+        didSet {
+            guard antigravityToolbarGroup != oldValue else { return }
+            SettingsStore.saveAntigravityToolbarGroup(antigravityToolbarGroup)
+            presenter(for: .antigravity)?.onVisualChange?()
+        }
+    }
+
+    var antigravityPopoverGroup: AntigravityPopoverGroupSelection {
+        didSet {
+            guard antigravityPopoverGroup != oldValue else { return }
+            SettingsStore.saveAntigravityPopoverGroup(antigravityPopoverGroup)
+        }
+    }
+
     private(set) var diagnosticEntries: [DiagnosticLogEntry]
 
     /// Which usage rows the panel shows folded. Owned here so every popover, in either
@@ -65,6 +80,7 @@ final class AppModel {
 
     private(set) var claudeExecutablePath: String
     private(set) var codexExecutablePath: String
+    private(set) var antigravityExecutablePath: String
     private var pollingPauseState = PollingPauseState()
     private let diagnosticLogStore: DiagnosticLogStore
 
@@ -83,7 +99,10 @@ final class AppModel {
         self.displayLanguage = displayLanguage ?? SettingsStore.loadLanguage()
         claudeExecutablePath = SettingsStore.loadClaudeExecutablePath()
         codexExecutablePath = SettingsStore.loadCodexExecutablePath()
+        antigravityExecutablePath = SettingsStore.loadAntigravityExecutablePath()
         codexTokenHistoryPeriod = SettingsStore.loadCodexTokenHistoryPeriod()
+        antigravityToolbarGroup = SettingsStore.loadAntigravityToolbarGroup()
+        antigravityPopoverGroup = SettingsStore.loadAntigravityPopoverGroup()
         windowDisclosure = WindowDisclosureModel(
             disclosure: SettingsStore.loadWindowDisclosure(),
             persist: { SettingsStore.saveWindowDisclosure($0) }
@@ -102,6 +121,13 @@ final class AppModel {
             presenter.codexExecutablePath = { [weak self] in
                 let path = self?.codexExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 return path.isEmpty ? nil : path
+            }
+            presenter.antigravityExecutablePath = { [weak self] in
+                let path = self?.antigravityExecutablePath.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                return path.isEmpty ? nil : path
+            }
+            presenter.antigravityToolbarGroup = { [weak self] in
+                self?.antigravityToolbarGroup ?? .default
             }
             presenter.onDiagnosticError = { [weak self, provider = presenter.provider] error, codexQuery in
                 guard let self else { return }
@@ -149,6 +175,15 @@ final class AppModel {
             await CodexAppServerClient.shared.stop()
             codex.refreshAfterConfigurationChange(generation)
         }
+    }
+
+    func setAntigravityExecutablePath(_ path: String) {
+        let normalized = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized != antigravityExecutablePath else { return }
+        antigravityExecutablePath = normalized
+        SettingsStore.saveAntigravityExecutablePath(normalized)
+        // No connection to tear down: each query is its own short-lived process.
+        presenter(for: .antigravity)?.providerConfigurationChanged()
     }
 
     func presenter(for provider: ProviderKind) -> ProviderPresenter? {

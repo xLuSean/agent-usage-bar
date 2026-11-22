@@ -94,13 +94,20 @@ private extension UsageSnapshot {
             return true
         case (.claude, .usageEndpoint),
              (.claude, .messagesFallback),
-             (.codex, .codexAppServer):
+             (.codex, .codexAppServer),
+             (.antigravity, .antigravityCLI):
             return true
         case (_, .fixture),
              (.claude, .codexAppServer),
+             (.claude, .antigravityCLI),
              (.codex, .claudeCodeCLI),
              (.codex, .usageEndpoint),
-             (.codex, .messagesFallback):
+             (.codex, .messagesFallback),
+             (.codex, .antigravityCLI),
+             (.antigravity, .claudeCodeCLI),
+             (.antigravity, .usageEndpoint),
+             (.antigravity, .messagesFallback),
+             (.antigravity, .codexAppServer):
             return false
         }
     }

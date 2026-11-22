@@ -25,6 +25,14 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
     case codexVersionIncompatible
     case codexRequestTimedOut
     case codexAppServerUnavailable
+    case antigravityExecutableNotFound
+    case antigravityExecutableInvalid
+    case antigravityNotSignedIn
+    case antigravityVersionUnsupported
+    case antigravityCommandFailed
+    case antigravityCommandTimedOut
+    case antigravityUsageOutdated
+    case antigravityUsageUnavailable
 
     public init(_ error: UsageError) {
         self = switch error {
@@ -47,6 +55,14 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .codexVersionIncompatible: .codexVersionIncompatible
         case .codexRequestTimedOut: .codexRequestTimedOut
         case .codexAppServerUnavailable: .codexAppServerUnavailable
+        case .antigravityExecutableNotFound: .antigravityExecutableNotFound
+        case .antigravityExecutableInvalid: .antigravityExecutableInvalid
+        case .antigravityNotSignedIn: .antigravityNotSignedIn
+        case .antigravityVersionUnsupported: .antigravityVersionUnsupported
+        case .antigravityCommandFailed: .antigravityCommandFailed
+        case .antigravityCommandTimedOut: .antigravityCommandTimedOut
+        case .antigravityUsageOutdated: .antigravityUsageOutdated
+        case .antigravityUsageUnavailable: .antigravityUsageUnavailable
         }
     }
 
@@ -72,6 +88,14 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .codexVersionIncompatible: chinese ? "Codex CLI 版本不相容" : "Codex CLI version incompatible"
         case .codexRequestTimedOut: chinese ? "Codex App Server 回應逾時" : "Codex App Server timed out"
         case .codexAppServerUnavailable: chinese ? "Codex App Server 無法使用" : "Codex App Server unavailable"
+        case .antigravityExecutableNotFound: chinese ? "找不到 Antigravity CLI" : "Antigravity CLI not found"
+        case .antigravityExecutableInvalid: chinese ? "Antigravity CLI 路徑不可用" : "Antigravity CLI path unavailable"
+        case .antigravityNotSignedIn: chinese ? "尚未登入 Antigravity" : "Not signed in to Antigravity"
+        case .antigravityVersionUnsupported: chinese ? "Antigravity CLI 版本不支援額度查詢" : "Antigravity CLI is too old to report usage"
+        case .antigravityCommandFailed: chinese ? "Antigravity 查詢失敗" : "Antigravity usage query failed"
+        case .antigravityCommandTimedOut: chinese ? "Antigravity 查詢逾時" : "Antigravity usage query timed out"
+        case .antigravityUsageOutdated: chinese ? "額度資料已跨過重置時間" : "Usage reading is past its reset time"
+        case .antigravityUsageUnavailable: chinese ? "Antigravity 未回傳可用額度" : "Antigravity has no current usage data"
         }
     }
 
@@ -129,6 +153,29 @@ public enum DiagnosticErrorKind: String, Codable, CaseIterable, Sendable, Hashab
         case .codexAppServerUnavailable:
             chinese ? "Codex App Server 無法啟動、連線或繼續提供服務。" :
                 "Codex App Server could not start, connect, or continue serving requests."
+        case .antigravityExecutableNotFound:
+            chinese ? "App 找不到 Antigravity CLI（`agy`）。" : "The app could not find the Antigravity CLI (`agy`)."
+        case .antigravityExecutableInvalid:
+            chinese ? "設定的 Antigravity CLI 不是可執行的一般檔案。" :
+                "The configured Antigravity CLI is not an executable regular file."
+        case .antigravityNotSignedIn:
+            chinese ? "Antigravity CLI 回報目前沒有可使用的登入狀態。" :
+                "Antigravity CLI reported that no usable sign-in state was available."
+        case .antigravityVersionUnsupported:
+            chinese ? "目前的 Antigravity CLI 版本不接受 App 使用的唯讀查詢。" :
+                "This Antigravity CLI version did not accept the read-only query used by the app."
+        case .antigravityCommandFailed:
+            chinese ? "Antigravity CLI 的唯讀用量指令沒有成功完成。" :
+                "Antigravity CLI's read-only usage command did not complete successfully."
+        case .antigravityCommandTimedOut:
+            chinese ? "Antigravity CLI 的唯讀用量指令在期限內沒有完成。" :
+                "Antigravity CLI's read-only usage command did not finish before the deadline."
+        case .antigravityUsageOutdated:
+            chinese ? "Antigravity 回傳的額度資料已跨過重置時間。" :
+                "Antigravity returned quota data that had passed its reset time."
+        case .antigravityUsageUnavailable:
+            chinese ? "Antigravity 沒有回傳可用的額度項目。" :
+                "Antigravity did not return any usable quota buckets."
         }
     }
 }
@@ -175,6 +222,15 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
     case codexWindowDurationInvalid
     case codexResetTimeInvalid
     case codexMessageTooLarge
+    case antigravityOutputNotJSONObject
+    case antigravityCLIResultNotSuccessful
+    case antigravityCommandExitedNonzero
+    case antigravityUnexpectedModelTurn
+    case antigravityCommandPayloadMissing
+    case antigravityGroupsUnreadable
+    case antigravityRemainingFractionInvalid
+    case antigravityResetTimeInvalid
+    case antigravityDuplicateBucket
 
     public init(provider: ProviderKind, error: UsageError) {
         switch error {
@@ -187,6 +243,14 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
                 self = .claudeCLIResultNotSuccessful
             } else if rawDetail.hasPrefix("Claude Code exited with status ") {
                 self = .claudeCommandExitedNonzero
+            } else {
+                self = .categorySummary
+            }
+        case .antigravityCommandFailed(let rawDetail):
+            if rawDetail == "Antigravity CLI did not report status=SUCCESS" {
+                self = .antigravityCLIResultNotSuccessful
+            } else if rawDetail.hasPrefix("Antigravity CLI exited with status ") {
+                self = .antigravityCommandExitedNonzero
             } else {
                 self = .categorySummary
             }
@@ -302,6 +366,33 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
         case .codexMessageTooLarge:
             chinese ? "Codex App Server 傳來超過 4 MB 且沒有換行的資料。" :
                 "Codex App Server sent more than 4 MB without a newline."
+        case .antigravityOutputNotJSONObject:
+            chinese ? "Antigravity CLI 的輸出不是 App 預期的 JSON 物件。" :
+                "Antigravity CLI's output was not the JSON object expected by the app."
+        case .antigravityCLIResultNotSuccessful:
+            chinese ? "Antigravity CLI 的 JSON 外層沒有將 `/usage` 標記為 SUCCESS。" :
+                "Antigravity CLI's JSON envelope did not mark `/usage` as SUCCESS."
+        case .antigravityCommandExitedNonzero:
+            chinese ? "Antigravity CLI 的唯讀用量指令以非零狀態結束。" :
+                "Antigravity CLI's read-only usage command exited with a nonzero status."
+        case .antigravityUnexpectedModelTurn:
+            chinese ? "Antigravity `/usage` 回應包含非零模型回合，App 拒絕採用該回應。" :
+                "Antigravity `/usage` reported a nonzero model turn, so the app rejected the response."
+        case .antigravityCommandPayloadMissing:
+            chinese ? "Antigravity CLI 回應缺少 `command.data` 結構化額度資料。" :
+                "Antigravity CLI's response was missing the structured `command.data` usage payload."
+        case .antigravityGroupsUnreadable:
+            chinese ? "Antigravity `/usage` 回傳的群組清單格式無法解析。" :
+                "Antigravity `/usage` returned a groups list whose structure could not be parsed."
+        case .antigravityRemainingFractionInvalid:
+            chinese ? "Antigravity `/usage` 某個額度項目的 `remaining_fraction` 不是有效的 0 到 1 數字。" :
+                "An Antigravity `/usage` bucket had a `remaining_fraction` that was not a valid number from 0 through 1."
+        case .antigravityResetTimeInvalid:
+            chinese ? "Antigravity `/usage` 某個額度項目的 `reset_time` 無法解析。" :
+                "An Antigravity `/usage` bucket had an unreadable `reset_time`."
+        case .antigravityDuplicateBucket:
+            chinese ? "Antigravity `/usage` 在同一個群組內重複列出相同的時間窗，App 無法安全選擇。" :
+                "Antigravity `/usage` listed the same window more than once in one group, so the app could not safely choose one."
         }
     }
 
@@ -343,6 +434,14 @@ public enum DiagnosticErrorDetail: String, Codable, Sendable, Hashable {
             if rawDetail == "Codex windowDurationMins must be an integer or null" { return .codexWindowDurationInvalid }
             if rawDetail == "Codex resetsAt must be an integer or null" { return .codexResetTimeInvalid }
             if rawDetail == "Codex App Server sent more than 4 MB without a newline" { return .codexMessageTooLarge }
+        case .antigravity:
+            if rawDetail == "Command output is not a JSON object" { return .antigravityOutputNotJSONObject }
+            if rawDetail == "Antigravity /usage response executed a model turn" { return .antigravityUnexpectedModelTurn }
+            if rawDetail == "Antigravity /usage command payload is missing" { return .antigravityCommandPayloadMissing }
+            if rawDetail == "Antigravity /usage groups array is unreadable" { return .antigravityGroupsUnreadable }
+            if rawDetail == "Antigravity /usage bucket remaining_fraction is invalid" { return .antigravityRemainingFractionInvalid }
+            if rawDetail == "Antigravity /usage bucket reset_time is invalid" { return .antigravityResetTimeInvalid }
+            if rawDetail == "Antigravity /usage contains duplicate quota buckets" { return .antigravityDuplicateBucket }
         }
         return .unrecognizedResponse
     }

@@ -354,10 +354,12 @@ enum StatusBarSelfTest {
         check(controller.diagnostics.allSatisfy { $0.exists }, "Separate items return after switching back")
 
         // Crossing a low-quota boundary must never widen the shared-frame icon.
+        let antigravity = model.presenter(for: .antigravity)!
         for layout in [MenuBarLayout.separate, .combined] {
             model.menuBarLayout = layout
             claude.applyDemoScenario(.healthy)
             codex.applyDemoScenario(.lowSession)
+            antigravity.applyDemoScenario(.healthy)
             func checkImageLayout(_ widths: [CGFloat], _ description: String) {
                 let actual = controller.imageLayoutDiagnostics
                 check(actual.compactMap(\.imageSize?.width) == widths,
@@ -367,34 +369,55 @@ enum StatusBarSelfTest {
                     return size.height == 18 && entry.length == size.width + 8
                 }, "\(description): AppKit allocates the complete image plus padding")
             }
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Mixed low-quota layout")
+            checkImageLayout(layout == .separate ? [27, 27, 27] : [87], "Mixed low-quota layout")
             claude.applyDemoScenario(.lowWeekly)
             codex.applyDemoScenario(.bothLow)
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Weekly and both-window percentages preserve fixed width")
+            antigravity.applyDemoScenario(.lowSession)
+            checkImageLayout(layout == .separate ? [27, 27, 27] : [87], "Weekly and both-window percentages preserve fixed width")
             check(claude.renderModel.session.lowRemainingPercent == nil && claude.renderModel.weekly.lowRemainingPercent == 9,
                   "Only the low weekly half switches to a percentage")
             check(codex.renderModel.session.lowRemainingPercent == 1 && codex.renderModel.weekly.lowRemainingPercent == 10,
                   "Both low windows show their own remaining percentages, including 10%")
             claude.applyDemoScenario(.lastPercent)
             codex.applyDemoScenario(.exhausted)
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Both low, including exhausted quota")
+            antigravity.applyDemoScenario(.bothLow)
+            checkImageLayout(layout == .separate ? [27, 27, 27] : [87], "Both low, including exhausted quota")
             check(codex.renderModel.session.lowRemainingPercent == 0 && codex.renderModel.weekly.lowRemainingPercent == 0,
                   "Exhausted current windows show 0% remaining")
             claude.applyDemoScenario(.lowQuotaBoundary)
             codex.applyDemoScenario(.lowQuotaBoundary)
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Quota recovery preserves fixed width")
+            antigravity.applyDemoScenario(.lowQuotaBoundary)
+            checkImageLayout(layout == .separate ? [27, 27, 27] : [87], "Quota recovery preserves fixed width")
             claude.applyDemoScenario(.healthy)
             codex.applyDemoScenario(.healthy)
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Healthy bars return without changing width")
+            antigravity.applyDemoScenario(.healthy)
+            checkImageLayout(layout == .separate ? [27, 27, 27] : [87], "Healthy bars return without changing width")
             claude.applyDemoScenario(.missingSession)
             codex.applyDemoScenario(.missingWeekly)
-            checkImageLayout(layout == .separate ? [27, 27] : [57], "Missing quota preserves both fixed slots")
+            antigravity.applyDemoScenario(.missingSession)
+            // Antigravity Free (weekly-only) collapses automatically to a single 20 pt gauge.
+            checkImageLayout(layout == .separate ? [27, 27, 20] : [80], "Missing quota preserves Claude/Codex dual slots and collapses Antigravity Free to single weekly slot")
             check(claude.renderModel.session.availability == .notListed
                   && claude.renderModel.weekly.availability == .reported,
                   "An omitted Claude session preserves its real weekly reading")
             check(codex.renderModel.session.availability == .reported
                   && codex.renderModel.weekly.availability == .unknown,
                   "A missing Codex weekly meter cannot erase its session reading")
+            check(antigravity.renderModel.displayedWindows == .weeklyOnly
+                  && antigravity.renderModel.weekly.availability == .reported,
+                  "Weekly-only Antigravity snapshot renders as a single weekly gauge")
+
+            // Separate toolbar vs popover window settings.
+            antigravity.applyDemoScenario(.healthy)
+            var singleSettings = antigravity.settings
+            singleSettings.toolbarWindows = .sessionOnly
+            singleSettings.popoverWindows = .both
+            antigravity.settings = singleSettings
+            checkImageLayout(layout == .separate ? [27, 27, 20] : [80], "Single-window toolbar preference renders 20 pt gauge")
+            check(antigravity.settings.popoverWindows == .both,
+                  "Popover window preference stays independent from toolbar window preference")
+            singleSettings.toolbarWindows = .both
+            antigravity.settings = singleSettings
         }
 
         // Folding a row changes the panel's height after the popover has been sized.
@@ -410,6 +433,7 @@ enum StatusBarSelfTest {
             model.menuBarLayout = layout
             claude.applyDemoScenario(.healthy)
             codex.applyDemoScenario(.healthy)
+            antigravity.applyDemoScenario(.healthy)
             guard let session = claude.state.snapshot?.windows.first(where: { $0.kind == .session }) else {
                 check(false, "\(layout.rawValue): the healthy scenario has no session row to fold")
                 continue
@@ -449,6 +473,33 @@ enum StatusBarSelfTest {
         check(
             model.windowDisclosure.disclosure == WindowDisclosure(),
             "The fold check leaves no row folded behind it"
+        )
+
+        let windowPrefSuite = "AgentUsageBar.selftest.window-prefs.\(UUID().uuidString)"
+        let windowPrefDefaults = UserDefaults(suiteName: windowPrefSuite)!
+        defer { windowPrefDefaults.removePersistentDomain(forName: windowPrefSuite) }
+        let savedAntigravity = ProviderSettings(
+            isEnabled: true,
+            identityColor: .indigo,
+            refreshInterval: .fiveMinutes,
+            toolbarWindows: .weeklyOnly,
+            popoverWindows: .both
+        )
+        SettingsStore.save(savedAntigravity, for: .antigravity, defaults: windowPrefDefaults)
+        let loadedAntigravity = SettingsStore.load(.antigravity, defaults: windowPrefDefaults)
+        check(
+            loadedAntigravity == savedAntigravity,
+            "Toolbar and popover window preferences persist independently per provider"
+        )
+        SettingsStore.saveAntigravityToolbarGroup(.highestUsed, defaults: windowPrefDefaults)
+        SettingsStore.saveAntigravityPopoverGroup(.group("Claude and GPT models"), defaults: windowPrefDefaults)
+        check(
+            SettingsStore.loadAntigravityToolbarGroup(defaults: windowPrefDefaults) == .highestUsed,
+            "Antigravity toolbar group preference persists independently"
+        )
+        check(
+            SettingsStore.loadAntigravityPopoverGroup(defaults: windowPrefDefaults) == .group("Claude and GPT models"),
+            "Antigravity popover group preference persists independently"
         )
 
         print(failures.isEmpty ? "\nselftest passed" : "\nselftest FAILED: \(failures.count) items")

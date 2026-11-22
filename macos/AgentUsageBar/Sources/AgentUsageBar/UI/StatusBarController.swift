@@ -330,8 +330,11 @@ final class StatusBarController: NSObject {
     }
 
     private func makeCombinedItem() -> NSStatusItem {
-        let count = max(1, model.enabledPresenters.count)
-        let item = NSStatusBar.system.statusItem(withLength: GaugeImageRenderer.combinedWidth(count: count))
+        let models = model.enabledPresenters.map { $0.renderModel(locale: model.displayLanguage.locale) }
+        let width = models.isEmpty
+            ? GaugeImageRenderer.combinedWidth(count: 1)
+            : GaugeImageRenderer.combinedWidth(for: models)
+        let item = NSStatusBar.system.statusItem(withLength: width)
         item.autosaveName = "AgentUsageBar.combined"
         item.isVisible = true
         item.button?.target = self
@@ -374,7 +377,10 @@ final class StatusBarController: NSObject {
     }
 
     private func makeItem(for presenter: ProviderPresenter) -> NSStatusItem {
-        let item = NSStatusBar.system.statusItem(withLength: GaugeImageRenderer.size.width + 8)
+        let initialWidth = GaugeImageRenderer.size(
+            for: presenter.renderModel(locale: model.displayLanguage.locale)
+        ).width + 8
+        let item = NSStatusBar.system.statusItem(withLength: initialWidth)
         // Distinct autosave names are not optional with more than one item. AppKit
         // derives a name from the app when none is given, so two items end up sharing
         // one persisted position and visibility record — and the second one to claim it
@@ -524,6 +530,7 @@ final class StatusBarController: NSObject {
                 presenters: presenters,
                 language: self?.model.displayLanguage ?? .english,
                 codexTokenHistoryPeriod: self?.model.codexTokenHistoryPeriod ?? .thirtyDays,
+                antigravityPopoverGroup: self?.model.antigravityPopoverGroup ?? .default,
                 allowsScrolling: allowsScrolling,
                 disclosure: self?.model.windowDisclosure ?? WindowDisclosureModel(),
                 onContentHeightChange: {

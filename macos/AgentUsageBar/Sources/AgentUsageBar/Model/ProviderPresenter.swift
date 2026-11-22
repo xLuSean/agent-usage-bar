@@ -102,6 +102,12 @@ final class ProviderPresenter {
     /// Supplied by AppModel. `nil` means auto-detect common executable locations.
     var codexExecutablePath: () -> String? = { nil }
 
+    /// Supplied by AppModel. `nil` means auto-detect common executable locations.
+    var antigravityExecutablePath: () -> String? = { nil }
+
+    /// Supplied by AppModel. Which Antigravity model group drives the menu bar gauge.
+    var antigravityToolbarGroup: () -> AntigravityToolbarGroupSelection = { .default }
+
     convenience init(provider: ProviderKind) {
         self.init(provider: provider, snapshotStore: UsageSnapshotStore())
     }
@@ -536,6 +542,10 @@ final class ProviderPresenter {
             )
         case .codex:
             return CodexUsageProvider(configuredExecutablePath: codexExecutablePath())
+        case .antigravity:
+            return AntigravityUsageProvider(
+                locator: AntigravityExecutableLocator(configuredPath: antigravityExecutablePath())
+            )
         }
     }
 
@@ -544,7 +554,13 @@ final class ProviderPresenter {
     }
 
     func renderModel(locale: Locale = Locale(identifier: "en_US")) -> GaugeRenderModel {
-        GaugeStyleResolver.renderModel(provider: provider, state: state, locale: locale)
+        GaugeStyleResolver.renderModel(
+            provider: provider,
+            state: state,
+            displayedWindows: settings.toolbarWindows,
+            antigravityToolbarGroup: antigravityToolbarGroup(),
+            locale: locale
+        )
     }
 
     var renderModel: GaugeRenderModel {

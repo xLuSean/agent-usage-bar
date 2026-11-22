@@ -45,6 +45,16 @@ public enum UsageError: Error, Sendable, Hashable {
     case codexRequestTimedOut(String)
     case codexAppServerUnavailable(String)
 
+    /// Antigravity-specific failures. All of them describe the local `agy` CLI path.
+    case antigravityExecutableNotFound
+    case antigravityExecutableInvalid(String)
+    case antigravityNotSignedIn
+    case antigravityVersionUnsupported(String)
+    case antigravityCommandFailed(String)
+    case antigravityCommandTimedOut
+    case antigravityUsageOutdated(resetsAt: Date)
+    case antigravityUsageUnavailable
+
     public var isThrottling: Bool {
         if case .rateLimited = self { return true }
         return false
@@ -86,6 +96,14 @@ public enum UsageError: Error, Sendable, Hashable {
             case .codexVersionIncompatible: "Codex CLI 版本不相容"
             case .codexRequestTimedOut: "Codex App Server 回應逾時"
             case .codexAppServerUnavailable: "Codex App Server 無法使用"
+            case .antigravityExecutableNotFound: "找不到 Antigravity CLI"
+            case .antigravityExecutableInvalid: "Antigravity CLI 路徑不可用"
+            case .antigravityNotSignedIn: "尚未登入 Antigravity"
+            case .antigravityVersionUnsupported: "Antigravity CLI 版本不支援額度查詢"
+            case .antigravityCommandFailed: "Antigravity 查詢失敗"
+            case .antigravityCommandTimedOut: "Antigravity 查詢逾時"
+            case .antigravityUsageOutdated: "額度資料已跨過重置時間"
+            case .antigravityUsageUnavailable: "Antigravity 未回傳可用額度"
             }
         }
         return switch self {
@@ -108,6 +126,14 @@ public enum UsageError: Error, Sendable, Hashable {
         case .codexVersionIncompatible: "Codex CLI version incompatible"
         case .codexRequestTimedOut: "Codex App Server timed out"
         case .codexAppServerUnavailable: "Codex App Server unavailable"
+        case .antigravityExecutableNotFound: "Antigravity CLI not found"
+        case .antigravityExecutableInvalid: "Antigravity CLI path unavailable"
+        case .antigravityNotSignedIn: "Not signed in to Antigravity"
+        case .antigravityVersionUnsupported: "Antigravity CLI is too old to report usage"
+        case .antigravityCommandFailed: "Antigravity usage query failed"
+        case .antigravityCommandTimedOut: "Antigravity usage query timed out"
+        case .antigravityUsageOutdated: "Usage reading is past its reset time"
+        case .antigravityUsageUnavailable: "Antigravity has no current usage data"
         }
     }
 
@@ -151,6 +177,21 @@ public enum UsageError: Error, Sendable, Hashable {
             case .codexRequestTimedOut(let method):
                 "唯讀查詢 \(method) 未在期限內完成；App 會依退避策略重試。"
             case .codexAppServerUnavailable(let detail): Self.localizedDetail(detail)
+            case .antigravityExecutableNotFound:
+                "請安裝 Antigravity CLI（`agy`），或在設定的「資料來源」頁指定 `agy` 執行檔路徑。"
+            case .antigravityExecutableInvalid(let path):
+                "指定的路徑不是可執行的一般檔案：\(path)"
+            case .antigravityNotSignedIn:
+                "請在終端機執行 `agy` 完成 Antigravity 登入，然後回來按「重新整理」。本 App 只會執行唯讀的 /usage 查詢，不會替你執行登入。"
+            case .antigravityVersionUnsupported(let detail):
+                "目前的 Antigravity CLI 不支援這個查詢方式，請更新 Antigravity CLI。\(Self.localizedDetail(detail))"
+            case .antigravityCommandFailed(let detail): Self.localizedDetail(detail)
+            case .antigravityCommandTimedOut:
+                "唯讀的 /usage 查詢未在期限內完成；App 會依退避策略重試。"
+            case .antigravityUsageOutdated:
+                "Antigravity 回報的額度時間窗已經結束。請確認網路連線後按「重新整理」。"
+            case .antigravityUsageUnavailable:
+                "Antigravity 這次沒有回傳可用的額度資料。請確認網路連線後按「重新整理」；若持續發生，在終端機執行一次 `agy`。"
             }
         }
         return switch self {
@@ -185,6 +226,21 @@ public enum UsageError: Error, Sendable, Hashable {
         case .codexRequestTimedOut(let method):
             "The read-only \(method) request timed out. The app will retry according to its backoff policy."
         case .codexAppServerUnavailable(let detail): detail
+        case .antigravityExecutableNotFound:
+            "Install the Antigravity CLI (`agy`), or specify the `agy` executable in Settings > Data Sources."
+        case .antigravityExecutableInvalid(let path):
+            "The selected path is not an executable regular file: \(path)"
+        case .antigravityNotSignedIn:
+            "Run `agy` in Terminal to sign in to Antigravity, then return and click Refresh. This app only runs the read-only /usage query; it never signs in for you."
+        case .antigravityVersionUnsupported(let detail):
+            "This Antigravity CLI build does not support the read-only usage query. Update the Antigravity CLI. \(detail)"
+        case .antigravityCommandFailed(let detail): detail
+        case .antigravityCommandTimedOut:
+            "The read-only /usage query timed out. The app will retry according to its backoff policy."
+        case .antigravityUsageOutdated:
+            "Antigravity reported a quota window that has already ended. Check your connection and click Refresh."
+        case .antigravityUsageUnavailable:
+            "Antigravity did not return any current usage buckets this time. Check your connection and click Refresh; if it persists, run `agy` once in Terminal."
         }
     }
 
@@ -209,6 +265,14 @@ public enum UsageError: Error, Sendable, Hashable {
             "Codex App Server was stopped by the app": "Codex App Server 已由 App 停止",
             "Codex CLI path changed": "Codex CLI 路徑已變更",
             "Codex App Server is not running": "Codex App Server 尚未執行",
+            "Antigravity CLI did not report status=SUCCESS": "Antigravity CLI 未回報 status=SUCCESS",
+            "Antigravity /usage response executed a model turn": "Antigravity /usage 回應異常包含模型回合",
+            "Antigravity /usage command payload is missing": "Antigravity /usage 缺少結構化指令資料",
+            "Antigravity /usage groups array is unreadable": "Antigravity /usage 群組陣列無法解析",
+            "Antigravity /usage bucket remaining_fraction is invalid": "Antigravity /usage 額度的 remaining_fraction 無效",
+            "Antigravity /usage bucket reset_time is invalid": "Antigravity /usage 額度的 reset_time 無效",
+            "Antigravity /usage contains duplicate quota buckets": "Antigravity /usage 包含重複的額度項目",
+            "Antigravity CLI path changed; waiting to reconnect": "Antigravity CLI 路徑已變更，等待重新連線",
         ]
         if let translated = exact[detail] { return translated }
 

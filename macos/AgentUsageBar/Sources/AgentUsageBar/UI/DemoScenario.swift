@@ -61,8 +61,8 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
             let base = Self.snapshot(sessionUsed: 29, weeklyUsed: 62, now: now, provider: provider)
             let windows = base.windows.filter { window in
                 switch self {
-                case .missingSession: window.kind != .session
-                case .missingWeekly: window.kind != .weeklyAll
+                case .missingSession: window.kind != .session && window.kind != .sessionScoped
+                case .missingWeekly: window.kind != .weeklyAll && window.kind != .weeklyScoped
                 default: false
                 }
             }
@@ -125,7 +125,61 @@ enum DemoScenario: String, CaseIterable, Sendable, Identifiable {
         now: Date,
         provider: ProviderKind
     ) -> UsageSnapshot {
-        UsageSnapshot(
+        if provider == .antigravity {
+            return UsageSnapshot(
+                provider: .antigravity,
+                sourcePath: .fixture,
+                windows: [
+                    UsageWindow(
+                        kind: .sessionScoped,
+                        group: .session,
+                        used: UsedPercent(hundredScale: sessionUsed),
+                        resetsAt: now.addingTimeInterval(3_600 * 3 + 1_200),
+                        isActive: false,
+                        modelDisplayName: "Gemini Models",
+                        durationMinutes: 300
+                    ),
+                    UsageWindow(
+                        kind: .weeklyScoped,
+                        group: .weekly,
+                        used: UsedPercent(hundredScale: weeklyUsed),
+                        resetsAt: now.addingTimeInterval(3_600 * 110),
+                        isActive: false,
+                        modelDisplayName: "Gemini Models",
+                        durationMinutes: 10_080
+                    ),
+                    UsageWindow(
+                        kind: .sessionScoped,
+                        group: .session,
+                        used: UsedPercent(hundredScale: max(0, sessionUsed - 12)),
+                        resetsAt: now.addingTimeInterval(3_600 * 4),
+                        isActive: false,
+                        modelDisplayName: "Claude and GPT models",
+                        durationMinutes: 300
+                    ),
+                    UsageWindow(
+                        kind: .weeklyScoped,
+                        group: .weekly,
+                        used: UsedPercent(hundredScale: max(0, weeklyUsed - 18)),
+                        resetsAt: now.addingTimeInterval(3_600 * 120),
+                        isActive: false,
+                        modelDisplayName: "Claude and GPT models",
+                        durationMinutes: 10_080
+                    ),
+                    UsageWindow(
+                        kind: .weeklyScoped,
+                        group: .weekly,
+                        used: UsedPercent(hundredScale: min(100, weeklyUsed + 10)),
+                        resetsAt: now.addingTimeInterval(3_600 * 120),
+                        isActive: false,
+                        modelDisplayName: "Gemini 4 Argon",
+                        durationMinutes: 10_080
+                    ),
+                ],
+                fetchedAt: now
+            )
+        }
+        return UsageSnapshot(
             provider: provider,
             sourcePath: .fixture,
             windows: [
